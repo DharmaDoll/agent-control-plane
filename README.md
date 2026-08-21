@@ -1,80 +1,80 @@
 # agent-control-plane
 
-A practical repository for designing, discussing, and implementing safe, deterministic, and auditable AI agent operations.
+安全で決定論的、かつ監査可能なAIエージェント運用を設計・検討・実装するための実践的なリポジトリです。
 
-## Why this repository exists
+## このリポジトリの目的
 
-A recurring failure mode in AI coding agents is giving the agent too much freedom over **how** privileged operations are performed.
+AIコーディングエージェントで繰り返し起きる失敗の一つは、権限操作を**どのように**実行するかについて、エージェントに自由を与えすぎることです。
 
-For example, a user may say:
+たとえば、ユーザーが次のように依頼したとします。
 
-> "Commit and push these changes."
+> 「この変更をコミットしてpushして」
 
-If the agent is allowed to decide the implementation method every time, it may reason differently on each run:
+実行方法を毎回エージェントに決めさせると、実行のたびに異なる判断をする可能性があります。
 
-- use `git push`
-- use `gh`
-- switch from HTTPS to SSH
-- look for a token in environment variables
-- inspect credential files
-- rewrite the Git remote
-- retry with a different authentication mechanism
+- `git push`を使う
+- `gh`を使う
+- HTTPSからSSHへ切り替える
+- 環境変数からトークンを探す
+- 認証情報ファイルを調べる
+- Git remoteを書き換える
+- 別の認証方法で再試行する
 
-The user's intent is stable, but the execution path is not.
+ユーザーの意図は同じでも、実行経路は一定ではありません。
 
-This creates a fundamental problem:
+ここには根本的な問題があります。
 
-> **We are asking a probabilistic system not only to decide what should be done, but also to invent how privileged operations should be executed.**
+> **確率的なシステムに、何をすべきかだけでなく、権限操作をどう実行するかまで考案させている。**
 
-That makes behavior harder to predict, audit, secure, and debug.
+これでは、動作の予測、監査、保護、デバッグが難しくなります。
 
-The purpose of `agent-control-plane` is to separate these responsibilities.
+`agent-control-plane`の目的は、この2つの責任を分離することです。
 
 ```text
-Probabilistic reasoning
+確率的な推論
         |
         v
-Policy-constrained decision
+ポリシーで制約された判断
         |
         v
-Deterministic interface
+決定論的なインターフェース
         |
         v
-Least-privileged credential boundary
+最小権限の認証情報境界
         |
         v
-External system
+外部システム
         |
         v
-Verification / Audit
+検証 / 監査
 ```
 
-The agent can still reason about **what action is appropriate**.
+エージェントは引き続き、**どの操作が適切か**を判断できます。
 
-The control plane defines **how that action is safely executed**.
+control planeは、**その操作を安全に実行する方法**を定義します。
 
-## Core idea
+## 中心となる考え方
 
-Do not rely on an LLM being consistently clever about privileged operations.
+権限操作について、LLMが毎回うまく判断することに依存しません。
 
-Instead:
+代わりに、次を行います。
 
-1. define policy explicitly;
-2. expose a small number of approved interfaces;
-3. make sensitive execution deterministic;
-4. keep credentials outside the agent's reasoning context;
-5. fail closed when assumptions are violated;
-6. make writes observable and auditable.
+1. ポリシーを明示する
+2. 承認済みのインターフェースを少数だけ公開する
+3. 機密性の高い操作を決定論的に実行する
+4. 認証情報をエージェントの推論コンテキスト外に置く
+5. 前提条件に違反した場合はfail closedにする
+6. 書き込み操作を観測・監査可能にする
 
-In short:
+要約すると：
 
-> **Probabilistic reasoning, deterministic enforcement.**
+> **確率的な推論、決定論的な強制。**
 
-## Initial use case: Git and GitHub
+## 最初のユースケース：GitとGitHub
 
-The first reference use case is Git/GitHub operations from coding agents such as Codex CLI or Claude Code.
+最初のリファレンスユースケースは、Codex CLIやClaude CodeなどのコーディングエージェントによるGit/GitHub操作です。
 
-The intended model is:
+想定するモデルは次のとおりです。
 
 ```text
 Agent
@@ -83,11 +83,11 @@ Agent
 AGENTS.md
   |  policy
   v
-Skill / approved workflow
-  |  procedure
+Skill / 承認済みワークフロー
+  |  手順
   v
 git / gh / wrapper
-  |  deterministic execution
+  |  決定論的な実行
   v
 OS credential store
   |
@@ -95,25 +95,25 @@ OS credential store
 GitHub
 ```
 
-Important principles:
+重要な原則：
 
-- Git operations use `git`.
-- GitHub-specific operations use `gh`.
-- Authentication configuration is managed outside the agent workflow.
-- Agents must not retrieve or print access tokens.
-- Agents must not silently switch authentication methods.
-- Agents must not rewrite remotes to work around authentication failures.
-- Writes should be preceded by status/diff/preflight checks.
-- Staging should target explicit paths.
-- Failures should be reported instead of "creatively" bypassed.
+- Git操作には`git`を使う
+- GitHub固有の操作には`gh`を使う
+- 認証設定はエージェントのワークフロー外で管理する
+- エージェントはアクセストークンを取得・表示しない
+- エージェントは認証方法を暗黙に切り替えない
+- 認証失敗を回避するためにremoteを書き換えない
+- 書き込み操作の前にstatus、diff、preflightを確認する
+- ステージするパスを明示する
+- 失敗時は独自の回避策を試さず、内容を報告する
 
-See [`docs/principles.md`](docs/principles.md) and [`examples/github/README.md`](examples/github/README.md).
+詳細は、[設計原則](docs/principles.md)、[GitHub認証の初期設定](docs/github/setup.md)、[GitHub運用手順](docs/github/workflow.md)、[GitHub制御パターン](examples/github/README.md)を参照してください。
 
-## Repository scope
+## リポジトリの対象範囲
 
-This repository is intentionally not GitHub-specific.
+このリポジトリは、意図的にGitHub専用にはしていません。
 
-Future patterns may cover:
+今後、次のパターンを扱う可能性があります。
 
 - GitHub
 - AWS
@@ -122,40 +122,43 @@ Future patterns may cover:
 - Terraform
 - CI/CD
 - Slack
-- databases
-- internal APIs
-- SaaS administration
-- MCP servers
-- agent skills and plugins
+- データベース
+- 社内API
+- SaaS管理
+- MCPサーバー
+- エージェントのSkillやプラグイン
 
-The common question is:
+共通する問いは次のとおりです。
 
-> Where should agent reasoning end, and deterministic control begin?
+> エージェントの推論をどこで終わらせ、どこから決定論的に制御すべきか？
 
-## How this repository should evolve
+## このリポジトリの発展方法
 
-When a new problem appears:
+新しい問題が発生したら：
 
-1. capture the failure mode;
-2. identify which decision was unnecessarily delegated to the agent;
-3. define the security boundary;
-4. turn the lesson into a reusable principle or pattern;
-5. implement the smallest deterministic interface that solves it;
-6. document trade-offs and exceptions.
+1. 失敗パターンを記録する
+2. エージェントに不必要に委ねていた判断を特定する
+3. セキュリティ境界を定義する
+4. 得られた知見を再利用可能な原則またはパターンにする
+5. 問題を解決する最小の決定論的インターフェースを実装する
+6. トレードオフと例外を文書化する
 
-The repository should become a practical body of knowledge for operating increasingly capable agents safely.
+このリポジトリを、高性能化するエージェントを安全に運用するための実践的な知識集として発展させます。
 
-## Initial structure
+## 現在の構成
 
 ```text
 agent-control-plane/
 ├── README.md
 ├── AGENTS.md
 ├── docs/
-│   └── principles.md
+│   ├── principles.md
+│   └── github/
+│       ├── setup.md
+│       └── workflow.md
 └── examples/
     └── github/
         └── README.md
 ```
 
-The structure is intentionally small. Add new directories only when repeated use cases justify them.
+構成は意図的に小さくしています。新しいディレクトリは、繰り返し発生するユースケースによって必要性が確認された場合にだけ追加します。

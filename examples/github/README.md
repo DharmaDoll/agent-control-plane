@@ -97,6 +97,13 @@ GitHub
 
 The agent should not need to retrieve the underlying token.
 
+The initial supported local configuration is HTTPS with GitHub CLI acting as
+Git's credential helper. Authentication is configured once by a human and only
+checked by the agent during normal operation:
+
+- [GitHub authentication setup](../../docs/github/setup.md)
+- [GitHub agent workflow](../../docs/github/workflow.md)
+
 ### Forbidden recovery behavior
 
 If authentication fails, the agent should not automatically:
@@ -158,9 +165,11 @@ What matters is that the policy is predetermined.
 
 Authentication failure must not cause the agent to invent a new push path.
 
-## Next step
+## Possible next step
 
-Once this pattern stabilizes, it may be implemented as:
+The initial implementation uses documented `git` and `gh` command sequences
+directly. If repeated use shows that documentation alone leaves material
+ambiguity or risk, the stable checks may be implemented as:
 
 ```text
 Skill
