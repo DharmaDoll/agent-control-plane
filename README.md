@@ -1,164 +1,56 @@
-# agent-control-plane
+# Product Security Skills
 
-安全で決定論的、かつ監査可能なAIエージェント運用を設計・検討・実装するための実践的なリポジトリです。
+Product Securityの仕事で繰り返し使う手順を、独立したSkillとしてまとめる個人用リポジトリです。まずはGitHub操作のSkillを一つ整備し、実務で必要になったものから追加します。
 
-## このリポジトリの目的
+リポジトリ名は当面 `agent-control-plane` のままです。大きな制御フレームワークや独自の認証基盤は作りません。
 
-AIコーディングエージェントで繰り返し起きる失敗の一つは、権限操作を**どのように**実行するかについて、エージェントに自由を与えすぎることです。
+## 現在のSkill
 
-たとえば、ユーザーが次のように依頼したとします。
+| Skill | できること |
+| --- | --- |
+| [controlled-github](skills/controlled-github/SKILL.md) | Gitの状態確認、対象ファイルを限定したcommit、送信する全commitを確認したpush、push済みbranchからのPR作成 |
 
-> 「この変更をコミットしてpushして」
+GitHub操作はProduct Security業務を支える共通の運用手順として位置づけています。脆弱性診断などのSkillはまだ含まれていません。
 
-実行方法を毎回エージェントに決めさせると、実行のたびに異なる判断をする可能性があります。
+## 導入と使い方
 
-- `git push`を使う
-- `gh`を使う
-- HTTPSからSSHへ切り替える
-- 環境変数からトークンを探す
-- 認証情報ファイルを調べる
-- Git remoteを書き換える
-- 別の認証方法で再試行する
+[skills/controlled-github/](skills/controlled-github/) をフォルダごと、利用するエージェントが認識するSkillディレクトリへ配置してください。配置場所や呼び出し方法は利用製品の設定に従います。同名のSkillがある場合は、差分を確認してから更新してください。この作業で自動インストールは行いません。
 
-ユーザーの意図は同じでも、実行経路は一定ではありません。
+Skillはこのリポジトリの他のファイルに依存しません。必要なのはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIです。helperに追加のPythonパッケージは不要です。
 
-ここには根本的な問題があります。
+依頼例：
 
-> **確率的なシステムに、何をすべきかだけでなく、権限操作をどう実行するかまで考案させている。**
+> controlled-githubを使って、このworktreeのbranchと差分、commit・pushの前提を確認して。まだstage・commit・push・設定変更はしないで。
 
-これでは、動作の予測、監査、保護、デバッグが難しくなります。
+> controlled-githubを使って、合意した変更だけをcommitし、確認済みのremote・branchへpushして。認証設定は変えず、PRは作成しないで。
 
-`agent-control-plane`の目的は、この2つの責任を分離することです。
+対象や権限が不明なら、書き込み前に確認します。「確認だけ」「commit」「push」「PR作成」は別の操作です。
 
-```text
-確率的な推論
-        |
-        v
-ポリシーで制約された判断
-        |
-        v
-決定論的なインターフェース
-        |
-        v
-最小権限の認証情報境界
-        |
-        v
-外部システム
-        |
-        v
-検証 / 監査
+## 認証と安全上の前提
+
+認証の初期設定は人間が行います。[初期設定手順](skills/controlled-github/references/setup.md)には、HTTPSで既存の`gh`認証をGit credential helper経由で使う方法を含めています。実行時にtokenを取得・表示したり、失敗を理由に認証方式を切り替えたりはしません。
+
+付属の[宛先検査helper](skills/controlled-github/references/target-check.md)は読み取り専用です。期待するworktree・host・repository・transportをローカル設定と照合し、複数push先などを検出すると停止します。PASSは認証成功やpush権限を保証するものではありません。
+
+Skill自体はsandboxではありません。権限の強制は実行環境やGitHub側の保護規則に依存します。信頼できないGit設定・hook・実行環境を安全にする仕組みではありません。
+
+## 検証
+
+リポジトリのルートで実行します。使い捨てのローカルGitリポジトリだけを使い、GitHubには接続しません。
+
+```sh
+python3 -B -m unittest discover -s skills/controlled-github/evals -p 'test_*.py' -v
 ```
 
-エージェントは引き続き、**どの操作が適切か**を判断できます。
+[検証記録](skills/controlled-github/evals/validation.md)では、自動テストと未実施のAgent動作評価・live GitHub検証を区別しています。Skillをコピーした後は、そのフォルダ内で `python3 -B -m unittest discover -s evals -p 'test_*.py' -v` を実行できます。
 
-control planeは、**その操作を安全に実行する方法**を定義します。
+## 管理方針
 
-## 中心となる考え方
+READMEは日本語、Skillの指示・技術文書・コードは英語で管理します。英語が常に優れると断定するものではなく、指示の重複と翻訳のずれを避けるための運用方針です。
 
-権限操作について、LLMが毎回うまく判断することに依存しません。
+- 一つのSkillは一つの用途に絞り、単独で持ち出せるようにする。
+- 手順はMarkdown、判断がぶれやすい検査は小さなscriptにする。
+- 実際に必要になるまで共通frameworkや設定ファイルを増やさない。
+- 実行した検証と、未検証の期待動作を分けて記録する。
 
-代わりに、次を行います。
-
-1. ポリシーを明示する
-2. 承認済みのインターフェースを少数だけ公開する
-3. 機密性の高い操作を決定論的に実行する
-4. 認証情報をエージェントの推論コンテキスト外に置く
-5. 前提条件に違反した場合はfail closedにする
-6. 書き込み操作を観測・監査可能にする
-
-要約すると：
-
-> **確率的な推論、決定論的な強制。**
-
-## 最初のユースケース：GitとGitHub
-
-最初のリファレンスユースケースは、Codex CLIやClaude CodeなどのコーディングエージェントによるGit/GitHub操作です。
-
-想定するモデルは次のとおりです。
-
-```text
-Agent
-  |
-  v
-AGENTS.md
-  |  policy
-  v
-Skill / 承認済みワークフロー
-  |  手順
-  v
-git / gh / wrapper
-  |  決定論的な実行
-  v
-OS credential store
-  |
-  v
-GitHub
-```
-
-重要な原則：
-
-- Git操作には`git`を使う
-- GitHub固有の操作には`gh`を使う
-- 認証設定はエージェントのワークフロー外で管理する
-- エージェントはアクセストークンを取得・表示しない
-- エージェントは認証方法を暗黙に切り替えない
-- 認証失敗を回避するためにremoteを書き換えない
-- 書き込み操作の前にstatus、diff、preflightを確認する
-- ステージするパスを明示する
-- 失敗時は独自の回避策を試さず、内容を報告する
-
-詳細は、[設計原則](docs/principles.md)、[GitHub認証の初期設定](docs/github/setup.md)、[GitHub運用手順](docs/github/workflow.md)、[GitHub制御パターン](examples/github/README.md)を参照してください。
-
-## リポジトリの対象範囲
-
-このリポジトリは、意図的にGitHub専用にはしていません。
-
-今後、次のパターンを扱う可能性があります。
-
-- GitHub
-- AWS
-- GCP
-- Kubernetes
-- Terraform
-- CI/CD
-- Slack
-- データベース
-- 社内API
-- SaaS管理
-- MCPサーバー
-- エージェントのSkillやプラグイン
-
-共通する問いは次のとおりです。
-
-> エージェントの推論をどこで終わらせ、どこから決定論的に制御すべきか？
-
-## このリポジトリの発展方法
-
-新しい問題が発生したら：
-
-1. 失敗パターンを記録する
-2. エージェントに不必要に委ねていた判断を特定する
-3. セキュリティ境界を定義する
-4. 得られた知見を再利用可能な原則またはパターンにする
-5. 問題を解決する最小の決定論的インターフェースを実装する
-6. トレードオフと例外を文書化する
-
-このリポジトリを、高性能化するエージェントを安全に運用するための実践的な知識集として発展させます。
-
-## 現在の構成
-
-```text
-agent-control-plane/
-├── README.md
-├── AGENTS.md
-├── docs/
-│   ├── principles.md
-│   └── github/
-│       ├── setup.md
-│       └── workflow.md
-└── examples/
-    └── github/
-        └── README.md
-```
-
-構成は意図的に小さくしています。新しいディレクトリは、繰り返し発生するユースケースによって必要性が確認された場合にだけ追加します。
+共通ルールは[AGENTS.md](AGENTS.md)と[開発原則](docs/principles.md)にあります。旧GitHub文書のリンクは移行案内として残しています。`skills_plan/` は検討用の原案であり、配布用Skillには含めず、実行時にも参照しません。
