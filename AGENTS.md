@@ -2,8 +2,8 @@
 
 ## Purpose
 
-This repository is a personal collection of Product Security skills, including
-the operational workflows that support that work. Keep the repository name
+This repository is a personal collection of reusable skills for AI agents,
+covering everyday tasks without restricting them to a specific domain. Keep the repository name
 `agent-control-plane` until a rename is explicitly requested.
 
 Optimize for:

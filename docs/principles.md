@@ -1,6 +1,6 @@
 # Skill development principles
 
-This repository is a personal Product Security skill collection. Start with a
+This repository is a personal collection of reusable agent skills. Start with a
 real, repeated task; add only the mechanism that makes that task safer or clearer.
 
 1. **One useful workflow per skill.** Keep each directory independently usable.

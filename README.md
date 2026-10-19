@@ -1,6 +1,6 @@
-# Product Security Skills
+# Agent Skills
 
-Product Securityの仕事で繰り返し使う手順を、独立したSkillとしてまとめる個人用リポジトリです。まずはGitHub操作のSkillを一つ整備し、実務で必要になったものから追加します。
+AIエージェントに任せる日々の作業を、再利用できるSkillとしてまとめる個人用リポジトリです。特定の分野に限定せず、実際に必要になったものから追加します。
 
 リポジトリ名は当面 `agent-control-plane` のままです。大きな制御フレームワークや独自の認証基盤は作りません。
 
@@ -9,14 +9,13 @@ Product Securityの仕事で繰り返し使う手順を、独立したSkillと�
 | Skill | できること |
 | --- | --- |
 | [controlled-github](skills/controlled-github/SKILL.md) | Gitの状態確認、対象ファイルを限定したcommit、送信する全commitを確認したpush、push済みbranchからのPR作成 |
-
-GitHub操作はProduct Security業務を支える共通の運用手順として位置づけています。脆弱性診断などのSkillはまだ含まれていません。
+| [spec-driven-development](skills/spec-driven-development/SKILL.md) | 要求を仕様・受入基準・小さなタスクに整理し、依頼された範囲でテスト・実装・検証・引き継ぎを進める |
 
 ## 導入と使い方
 
-[skills/controlled-github/](skills/controlled-github/) をフォルダごと、利用するエージェントが認識するSkillディレクトリへ配置してください。配置場所や呼び出し方法は利用製品の設定に従います。同名のSkillがある場合は、差分を確認してから更新してください。この作業で自動インストールは行いません。
+使いたいSkillを `skills/` からフォルダごと、利用するエージェントが認識するSkillディレクトリへ配置してください。配置場所や呼び出し方法は利用製品の設定に従います。同名のSkillがある場合は、差分を確認してから更新してください。この作業で自動インストールは行いません。
 
-Skillはこのリポジトリの他のファイルに依存しません。必要なのはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIです。helperに追加のPythonパッケージは不要です。
+各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
 依頼例：
 
@@ -25,6 +24,14 @@ Skillはこのリポジトリの他のファイルに依存しません。必要
 > controlled-githubを使って、合意した変更だけをcommitし、確認済みのremote・branchへpushして。認証設定は変えず、PRは作成しないで。
 
 対象や権限が不明なら、書き込み前に確認します。「確認だけ」「commit」「push」「PR作成」は別の操作です。
+
+開発の進め方を整える場合：
+
+> spec-driven-developmentを使って、この機能の仕様・受入基準・実装計画・テスト計画を整理して。今回は提案までで、ファイルは変更しないで。
+
+> spec-driven-developmentを使って、合意した計画をタスクごとに実装・検証して。結果と次の作業を既存の作業記録に残して。commit・pushはしないで。
+
+小さな変更には短い確認だけを使い、複数工程の作業には[作業記録テンプレート](skills/spec-driven-development/assets/work-item.md)を必要に応じて使います。開発とGitHub操作のSkillは互いに独立しており、一方の利用がもう一方の操作許可になることはありません。
 
 ## 認証と安全上の前提
 
@@ -36,13 +43,15 @@ Skill自体はsandboxではありません。権限の強制は実行環境やGi
 
 ## 検証
 
-リポジトリのルートで実行します。使い捨てのローカルGitリポジトリだけを使い、GitHubには接続しません。
+`controlled-github`の自動テストはリポジトリのルートで実行します。使い捨てのローカルGitリポジトリだけを使い、GitHubには接続しません。
 
 ```sh
 python3 -B -m unittest discover -s skills/controlled-github/evals -p 'test_*.py' -v
 ```
 
 [検証記録](skills/controlled-github/evals/validation.md)では、自動テストと未実施のAgent動作評価・live GitHub検証を区別しています。Skillをコピーした後は、そのフォルダ内で `python3 -B -m unittest discover -s evals -p 'test_*.py' -v` を実行できます。
+
+`spec-driven-development`はMarkdownによる手順です。[動作評価シナリオ](skills/spec-driven-development/evals/scenarios.md)で、軽量な変更、計画のみの依頼、テストの失敗、セッション再開などを評価します。文書の形式・参照チェックと、Agentが実際に手順を守るかの評価は区別します。
 
 ## 管理方針
 
