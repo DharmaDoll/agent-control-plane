@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This repository is a working space for developing security and operational patterns for AI agents.
+This repository is a personal collection of reusable skills for AI agents,
+covering everyday tasks without restricting them to a specific domain. Keep the repository name
+`agent-control-plane` until a rename is explicitly requested.
 
 Optimize for:
 
@@ -36,6 +38,16 @@ When evaluating a design, ask:
 ## Development rules
 
 Keep the repository simple while the design is still evolving.
+
+- Put distributable skills under `skills/<skill-name>/` with a concise `SKILL.md`.
+- Make each skill self-contained; use relative references within its directory.
+- Load detailed references only when needed; do not duplicate canonical procedures.
+- Prefer standard-library scripts; add shared infrastructure only for demonstrated reuse.
+- Keep README.md in Japanese; keep skill instructions, technical docs, and code in English.
+- Test helpers with isolated local fixtures. Separate automated results, agent-behavior
+  evaluations, and live-service checks; never claim unexecuted validation passed.
+- Treat `skills_plan/` as draft source, not a runtime dependency or distribution.
+  Preserve existing untracked drafts unless the user explicitly requests changes.
 
 Prefer:
 
