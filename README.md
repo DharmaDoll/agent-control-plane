@@ -17,6 +17,45 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
+### GitHubから導入する（Codex）
+
+このリポジトリを手元にcloneせず、GitHubから取得して導入することもできます。Codexの`skill-installer`は他のGitHubリポジトリからの導入に対応しています。リポジトリ単位で使う場合の配置先は、導入先のルートにある`.agents/skills/`です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
+
+導入先リポジトリでCodexを開き、次の依頼を送ってください。配布元は[docs/japanese-readme branchのskillsディレクトリ](https://github.com/DharmaDoll/agent-control-plane/tree/docs/japanese-readme/skills)です。
+
+```text
+$skill-installer
+
+以下のGitHubリポジトリから、2つのSkillを導入してください。
+
+repository: DharmaDoll/agent-control-plane
+ref: docs/japanese-readme
+paths:
+- skills/spec-driven-development
+- skills/controlled-github
+
+配置先は、このリポジトリのルートにある .agents/skills/ としてください。
+各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
+
+- installerの --repo・--ref・--path を別々に指定する
+- --dest には導入先リポジトリの .agents/skills/ の絶対パスを指定する
+- --method download を使い、失敗時は別方式へ切り替えず停止する
+- 同名Skillが既にある場合は上書きせず報告する
+- 認証設定や既存のAGENTS.mdは変更しない
+- commit・pushはしない
+- 導入後に各SkillのSKILL.mdと参照ファイルの存在を確認する
+```
+
+片方だけ必要なら、`paths`から不要な方を外してください。リポジトリのルートにある`AGENTS.md`や`skills_plan/`を導入先へコピーする必要はありません。
+
+- **branchは明示する**：`docs/japanese-readme`には`/`が含まれるため、URLの解釈に任せず、repository・ref・pathを分けて指定します。
+- **配置先は明示する**：installerのデフォルト配置先に任せず、対象リポジトリへ導入します。個人の全リポジトリで共通利用したい場合は、配置先を`~/.agents/skills/`へ変更できます。同名Skillの重複配置は避けてください。
+- **取得した版は自動更新されない**：更新時は差分を確認して置き換えます。同じ版を再現したい場合は、`ref`にbranch名ではなくcommit SHAを指定します。
+
+導入後はCodexの`/skills`で認識を確認してください。表示されない場合はCodexを再起動します。Skillの取得・配置と、GitHub操作に必要な認証設定は別の作業です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
+
+### 利用例
+
 依頼例：
 
 > controlled-githubを使って、このworktreeのbranchと差分、commit・pushの前提を確認して。まだstage・commit・push・設定変更はしないで。
