@@ -191,7 +191,7 @@ class LifecycleTests(unittest.TestCase):
         binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
         if not binary:
             self.skipTest("SECRET_CHECKS_GITLEAKS is required for the real Gitleaks lifecycle")
-        self.manage("install", "--engine", "gitleaks", "--gitleaks", binary)
+        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks", binary)
         self.manage("verify")
         self.manage("update")
         self.assertEqual(self.state()["bundles"][self.state()["active"]]["engine"], "gitleaks")
@@ -257,7 +257,7 @@ class LifecycleTests(unittest.TestCase):
         binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
         if not binary:
             self.skipTest("SECRET_CHECKS_GITLEAKS required")
-        self.manage("install", "--engine", "gitleaks", "--gitleaks", binary)
+        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks", binary)
         self.manage("update", "--engine", "combined")
         self.assertEqual(self.state()["bundles"][self.state()["active"]]["engine"], "combined")
         self.manage("verify")

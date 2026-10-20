@@ -6,6 +6,7 @@ import argparse
 from contextlib import contextmanager
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ HOOKS = ("pre-commit", "commit-msg", "pre-push")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 GITLEAKS_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
 ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py", "scripts/combined_gate.py",
+                 "scripts/docker_gitleaks.py", "docker-image.json",
                  "gitleaks.toml", "bin/gitleaks", *("hooks/" + h for h in HOOKS)}
 OVERRIDES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
              "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
@@ -125,6 +127,22 @@ class Repository:
 
     def save(self, state):
         atomic_json(self.directory / "state.json", state)
+
+    def docker_images(self, state):
+        images = set()
+        for identity, record in state["bundles"].items():
+            if "docker-image.json" not in record["files"]:
+                continue
+            path = self.bundles / identity / "docker-image.json"
+            if not regular(path) or path.stat().st_size > 4096:
+                continue
+            try:
+                image = json.loads(path.read_bytes()).get("image_id")
+                if isinstance(image, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", image):
+                    images.add(image)
+            except (ValueError, AttributeError):
+                continue
+        return sorted(images)
 
     @contextmanager
     def lock(self, *, create=False):
@@ -233,10 +251,18 @@ class Repository:
                 "index_entries": len(entries), "unsupported_index_entries": unsupported,
                 "object_database": objects,
                 "hook_config_scopes": scope_names,
-                "active": active, "engine": state["bundles"][active]["engine"] if active else None}
+                "active": active, "engine": state["bundles"][active]["engine"] if active else None,
+                "runtime": bundle_runtime(state["bundles"][active]) if active else None,
+                "docker_images": self.docker_images(state) if state else []}
 
 
-def source_payload(engine, binary):
+def bundle_runtime(record):
+    return "docker" if "docker-image.json" in record["files"] else "native"
+
+
+def source_payload(engine, binary, runtime="native"):
+    if runtime == "docker" and engine == "python":
+        raise Blocked("DOCKER_REQUIRES_GITLEAKS_ENGINE")
     scanner = {"python": "scan_sensitive.py", "gitleaks": "gitleaks_gate.py",
                "combined": "combined_gate.py"}[engine]
     payload = {"scripts/" + scanner: ((SKILL / "scripts" / scanner).read_bytes(), 0o600)}
@@ -265,6 +291,19 @@ def source_payload(engine, binary):
             raise Blocked("GITLEAKS_DIGEST_MISMATCH")
         payload["bin/gitleaks"] = (data, 0o700)
         payload["gitleaks.toml"] = ((SKILL / "assets/gitleaks.toml").read_bytes(), 0o600)
+        if runtime == "docker":
+            spec = importlib.util.spec_from_file_location("docker_gitleaks", SKILL / "scripts/docker_gitleaks.py")
+            docker = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(docker)
+            try:
+                identity = docker.build_image(data, payload["gitleaks.toml"][0])
+            except RuntimeError as error:
+                raise Blocked(str(error)) from None
+            payload["docker-image.json"] = (json.dumps({"image_id": identity}).encode() + b"\n", 0o600)
+            payload["scripts/docker_gitleaks.py"] = ((SKILL / "scripts/docker_gitleaks.py").read_bytes(), 0o600)
+            content, mode = payload["scripts/gitleaks_gate.py"]
+            payload["scripts/gitleaks_gate.py"] = (
+                content.replace(b'RUNTIME = "native"', b'RUNTIME = "docker"'), mode)
     return payload
 
 
@@ -340,7 +379,7 @@ def isolated_probe(hooks, engine=None):
                 raise Blocked("PROBE_VALUE_WAS_DISCLOSED")
 
 
-def activate(repo, action, engine, binary):
+def activate(repo, action, engine, binary, runtime=None):
     inspection = repo.inspect()
     state = repo.load()
     if state and state["active"]:
@@ -353,12 +392,15 @@ def activate(repo, action, engine, binary):
     elif action == "update":
         raise Blocked("NOT_INSTALLED")
     chosen = engine or (state["bundles"][state["active"]]["engine"] if state and state["active"] else "python")
+    selected_runtime = runtime or (bundle_runtime(state["bundles"][state["active"]])
+                                  if state and state["active"] else
+                                  ("native" if chosen == "python" else "docker"))
     if binary is not None and chosen not in ("gitleaks", "combined"):
         raise Blocked("GITLEAKS_BINARY_REQUIRES_GITLEAKS_ENGINE")
     if (state and state["active"] and chosen in ("gitleaks", "combined") and binary is None
             and state["bundles"][state["active"]]["engine"] in ("gitleaks", "combined")):
         binary = repo.bundles / state["active"] / "bin/gitleaks"
-    payload = source_payload(chosen, binary)
+    payload = source_payload(chosen, binary, selected_runtime)
     files = {name: {"sha256": hashlib.sha256(data).hexdigest(), "mode": mode} for name, (data, mode) in payload.items()}
     identity = hashlib.sha256(json.dumps({"engine": chosen, "files": files}, sort_keys=True).encode()).hexdigest()
     with repo.lock(create=True):
@@ -367,7 +409,8 @@ def activate(repo, action, engine, binary):
         if state["active"] == identity:
             if not repo.bundle_clean(identity, state["bundles"][identity]):
                 raise Blocked("ACTIVE_BUNDLE_MODIFIED")
-            return {"status": "PASS", "action": "UNCHANGED", "active": identity, "engine": chosen}
+            return {"status": "PASS", "action": "UNCHANGED", "active": identity,
+                    "engine": chosen, "runtime": selected_runtime}
         if action == "install" and state["active"]:
             raise Blocked("USE_UPDATE_FOR_DIFFERENT_VERSION")
         path = repo.bundles / identity
@@ -414,7 +457,8 @@ def activate(repo, action, engine, binary):
             state["active"], state["previous"] = old_active, old_previous
             raise
         return {"status": "PASS", "action": action.upper(), "active": identity,
-                "engine": chosen, "configuration": "PASS", "isolated_hooks": "PASS"}
+                "engine": chosen, "runtime": selected_runtime,
+                "configuration": "PASS", "isolated_hooks": "PASS"}
 
 
 def managed_operation(repo, action, apply):
@@ -449,7 +493,8 @@ def managed_operation(repo, action, apply):
                         git(repo.repo, "config", "--local", "core.hooksPath", str(repo.bundles / active / "hooks"))
                     state["active"], state["previous"] = active, previous
                     raise
-            return {"status": "PASS", "action": "UNINSTALL", "bundles_retained": len(state["bundles"])}
+            return {"status": "PASS", "action": "UNINSTALL", "bundles_retained": len(state["bundles"]),
+                    "docker_images_retained": repo.docker_images(state)}
         if action == "rollback":
             previous, active = state["previous"], state["active"]
             if not active or not previous:
@@ -469,6 +514,7 @@ def managed_operation(repo, action, apply):
                 raise
             return {"status": "PASS", "action": "ROLLBACK", "active": previous,
                     "configuration": "PASS", "isolated_hooks": "PASS"}
+        images_retained = repo.docker_images(state)
         protected = {state["active"], state["previous"]} if state["active"] else set()
         candidates, kept, removed = [], [], []
         for identity, record in list(state["bundles"].items()):
@@ -507,7 +553,8 @@ def managed_operation(repo, action, apply):
                 removed.append(identity)
             repo.save(state)
         return {"status": "PASS", "action": "CLEANUP" if apply else "PREVIEW",
-                "candidates": candidates, "removed": removed, "kept": kept}
+                "candidates": candidates, "removed": removed, "kept": kept,
+                "docker_images_retained": images_retained}
 
 
 def main():
@@ -520,17 +567,18 @@ def main():
         parser.add_argument("--repo", type=Path, required=True)
         parser.add_argument("--engine", choices=("python", "gitleaks", "combined"))
         parser.add_argument("--gitleaks", type=Path)
+        parser.add_argument("--runtime", choices=("native", "docker"))
         parser.add_argument("--apply", action="store_true", help="Delete cleanup candidates; otherwise preview only")
         args = parser.parse_args()
         if platform.system() != "Linux" or sys.version_info < (3, 10):
             raise Blocked("UNSUPPORTED_PLATFORM")
-        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks)):
+        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks or args.runtime)):
             raise Blocked("INVALID_ARGUMENTS")
         repo = Repository(args.repo)
         if args.action == "inspect":
             result = repo.inspect()
         elif args.action in ("install", "update"):
-            result = activate(repo, args.action, args.engine, args.gitleaks)
+            result = activate(repo, args.action, args.engine, args.gitleaks, args.runtime)
         else:
             result = managed_operation(repo, args.action, args.apply)
         print(json.dumps(result, sort_keys=True))

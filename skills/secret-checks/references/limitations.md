@@ -52,6 +52,12 @@ See [gitleaks.md](gitleaks.md). It scans full reachable objects and supports tag
 but deliberately rejects many formats and large histories. Its limits and detection
 behavior are different; never substitute one engine for another after a failure.
 
+[Docker runtime](docker.md) is preferred for new Gitleaks/combined installations.
+It isolates the detector, not the host Git enumeration or custom Python policy.
+Container startup counts toward hook deadlines. The Docker daemon and prepared
+image are additional trusted components; Docker failure never selects native
+execution. Shared images remain after bundle cleanup.
+
 ## Trust and residual risks
 
 The [combined engine](combined.md) runs both scanners and requires both successes.

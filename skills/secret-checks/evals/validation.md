@@ -19,9 +19,10 @@ SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discove
 python3 -B -m unittest discover -s skills/controlled-github/evals -p 'test_*.py' -q
 ```
 
-Tests use only temporary local worktrees/bare remotes and runtime-assembled,
-non-issued canaries. No real credential, live GitHub push or target-checkout
-commit is used.
+Git tests use temporary local worktrees/bare remotes and runtime-assembled,
+non-issued canaries. Docker-specific tests additionally use the local daemon as
+recorded below. No real credential, live GitHub push or target-checkout commit
+is used.
 
 | Suite / check | Observed evidence | Result |
 | --- | --- | --- |
@@ -77,6 +78,53 @@ CodeGuard guidance on secret-free fixtures, structured subprocess arguments,
 bounded execution, and non-sensitive output.
 
 No target repository installation was migrated by this change.
+
+## Docker runtime addition (2026-10-20)
+
+Verified on local Linux x86_64 Docker using the same pinned Gitleaks binary.
+The opt-in command is:
+
+```sh
+SECRET_CHECKS_DOCKER=1 SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_*.py' -v
+```
+
+Without `SECRET_CHECKS_DOCKER=1`, the real Docker lifecycle is skipped even if
+the verified binary is available. Such a run does not validate Docker execution.
+
+The first Docker suite passed 8 tests (7 command-contract cases and one real
+combined lifecycle). The expanded real lifecycle also passed: default Docker
+selection, runtime-preserving update, native update and Docker rollback,
+configuration/integrity probes, missing-manifest refusal, and image-retaining
+bundle cleanup. Final command-contract tests passed all 8 cases after adding
+malformed/missing/oversized manifest refusal.
+
+The full regression collected 71 tests: 69 passed, and two existing fault-injection
+tests errored because their manually constructed Scanner fixture lacked the new
+runtime field (eight error entries including subtests). The fixture was corrected
+to initialize native mode; both affected tests then passed in a focused rerun.
+The additional manifest-contract test also passed in the final 8-case contract
+run. There was no single all-green 72-test run; final evidence is per affected
+case/suite. Real Gitleaks cases (21), manager cases (20), Python cases (14), and
+combined dispatcher cases (6) passed in the full run.
+
+The real probe exercises safe commit/push, staged and message findings, incomplete
+input, and removed secrets retained in outgoing history. Contract fault injection
+covers attach timeout, OOM, unexpected exits, failed container cleanup, unknown
+create results, fixed build inputs, and non-sensitive error handling. These are
+separate forms of evidence; a mocked timeout is not a live-daemon outage test.
+
+No live target repository was migrated. Temporary labeled scan containers were
+absent after the Docker lifecycle completed. A 22 MB test image remains in the
+local daemon, consistent with the shared-image retention policy:
+`sha256:c1ad3ad8e126385ed891d5ceaa6a3ef1ebc5dbb5f0f2ea199488b4bd7fa75e30`.
+No global image/cache pruning was performed. The image is locally built from
+verified binary bytes, not an upstream signed container release.
+
+The skill-creator workflow keeps deployment decisions in the skill and detailed
+procedures in references. CodeGuard guidance informed fixed image selection,
+non-root/read-only execution, disabled networking, bounded resources, no host
+mounts, exact container cleanup, and suppressed child diagnostics. No new
+credentials, certificates, or authentication configuration were introduced.
 
 ## Limits of the evidence
 
