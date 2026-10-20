@@ -40,9 +40,20 @@ repositories, then changes only the target's local `core.hooksPath` and reads it
 back. It records file digests, activation state, and the original absence of hook
 configuration. The installed hooks do not depend on this checkout or a network.
 
-For Gitleaks, read [gitleaks.md](references/gitleaks.md) first. The user must select
-that engine and provide the pinned, verified binary; the manager never downloads
-software or substitutes a different engine after failure.
+For Gitleaks or combined mode, read the deployment and acquisition procedure in
+[gitleaks.md](references/gitleaks.md) before setup. Distinguish skill-copy
+installation from executable acquisition and hook activation. Establish the
+engine, supported OS/architecture, approved binary source and staging path, and
+target Git administration directory. Prefer Docker for new Gitleaks/combined
+installations and pass `--runtime docker` explicitly. Read
+[docker.md](references/docker.md) for daemon prerequisites, image preparation,
+execution limits, and retained-image cleanup. Use `--runtime native` only when
+the user selects it; an unavailable Docker daemon is not permission to fall back.
+Preserve an existing runtime unless a change is requested. The manager never downloads
+software or substitutes a different engine after failure. If the pinned binary
+or an approved acquisition procedure is unavailable, report that specific blocker.
+Do not invent a downloader, install Docker/packages, use `sudo`, modify PATH, or
+substitute a binary found on PATH as an implicit setup step.
 
 When both scanners are requested, select `--engine combined` and read
 [combined.md](references/combined.md). Every hook runs Python then Gitleaks and
@@ -83,6 +94,8 @@ local account remain trusted.
 
 Use [scenarios.md](evals/scenarios.md) for agent-behavior evaluations. Automated
 tests and their recorded scope are in [validation.md](evals/validation.md).
-Report the engine, bundle ID, actual checks/results, retained cleanup items, and
-any unsupported configuration. A suggested integration is not an installed or
+Report the engine and runtime, skill location, binary source, Docker image ID
+when applicable, resolved installed binary/hook paths, bundle ID, actual checks/results, retained
+cleanup items, and any unsupported configuration. Do not disclose sensitive path
+components in public documentation; use placeholders there. A suggested integration is not an installed or
 verified integration. Commit/push and SaaS configuration are separate operations.

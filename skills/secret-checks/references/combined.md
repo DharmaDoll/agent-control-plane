@@ -40,7 +40,7 @@ Prepare the [verified Gitleaks binary](gitleaks.md) first. From the skill direct
 ```sh
 python3 -B scripts/manage_hooks.py inspect --repo /path/to/repository
 python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
-  --engine combined --gitleaks /path/to/verified/gitleaks
+  --engine combined --runtime docker --gitleaks /path/to/verified/gitleaks
 python3 -B scripts/manage_hooks.py verify --repo /path/to/repository
 ```
 
@@ -50,6 +50,11 @@ can supply its already verified binary when `--gitleaks` is omitted. The manager
 verifies the pinned digest again; it never downloads a binary or falls back.
 Ordinary updates preserve the selected engine. The initial default remains
 Python for compatibility; copying this skill does not change installed hooks.
+
+Prefer [Docker execution](docker.md) for Gitleaks. Python policy and Git object
+enumeration still run on the host. New Gitleaks/combined installations default to
+Docker; existing installations preserve their runtime unless `--runtime` changes
+it explicitly. Docker failures never select native execution.
 
 Installation, verification, and rollback probe the exact bundle in temporary
 Git repositories. In combined mode the probes require both engines' success

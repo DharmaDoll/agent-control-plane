@@ -244,6 +244,7 @@ class ScannerFailureTests(unittest.TestCase):
     def scanner(self):
         scanner = gate.Scanner.__new__(gate.Scanner)
         scanner.binary = Path('/unused')
+        scanner.docker = None
         scanner.total = 0
         return scanner
 

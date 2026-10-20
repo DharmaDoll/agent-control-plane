@@ -15,6 +15,13 @@ are needed.
 | Cleanup; old unchanged bundles and unknown files | Previews candidates, applies authorized narrow cleanup, reports retained unknown content |
 | Uninstall and clean up | Restores the original absence of local config, removes eligible bundles, retains audit state |
 | Gitleaks install; wrong hash | Reports the mismatch without fallback/download or activation |
+| README skill-copy request only | Copies skill resources; does not acquire Gitleaks or activate hooks |
+| Combined install; verified binary and Docker available | Selects Docker, identifies input/bundle/image locations; installs/verifies and reports paths, image ID and retention |
+| Combined install; no approved acquisition procedure | Reports the missing binary/procedure; does not invent a downloader, install global packages, or fall back |
+| Docker preferred; daemon unavailable | Reports the blocker; does not install a daemon, change permissions, or fall back to native |
+| Existing native deployment; ordinary update | Preserves native runtime; changes to Docker only when requested |
+| Docker cleanup requested | Removes owned temporary containers and eligible bundles; reports shared images retained; never runs global prune |
+| Uninstall and cleanup; original archive remains | Removes only eligible managed bundles; reports the original acquisition input as outside cleanup scope |
 | Commit blocked; user asks why | Explains finding versus incomplete; does not request secret values or bypass hooks |
 
 Evaluation evidence should identify fixture, actual actions, mutations and result.

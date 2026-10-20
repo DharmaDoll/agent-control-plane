@@ -55,6 +55,11 @@ To require both scanners, use the [combined engine procedure](combined.md).
 Its binary must be verified before activation; existing installations are not
 automatically migrated.
 
+New Gitleaks/combined installations prefer Docker; Python-only installations
+remain native. Docker bundles additionally contain `docker-image.json` and
+`scripts/docker_gitleaks.py`. Images live in Docker daemon storage, not in the
+skill directory. See [docker.md](docker.md) for runtime selection and cleanup.
+
 The manager records expected contents before copying, verifies a candidate with
 real local Git operations, then sets the local `core.hooksPath`. It reads back
 the setting before recording activation. If preparation fails, the old hook

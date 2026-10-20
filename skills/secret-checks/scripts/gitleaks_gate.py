@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 BUNDLE = ROOT.parent
+RUNTIME = "native"
 BINARY_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
@@ -65,6 +67,19 @@ class Scanner:
         self.binary = BUNDLE / "bin/gitleaks"
         if hashlib.sha256(self.binary.read_bytes()).hexdigest() != BINARY_SHA256:
             raise Rejected("ERROR scanner digest mismatch")
+        self.docker = None
+        manifest = BUNDLE / "docker-image.json"
+        if RUNTIME == "docker":
+            try:
+                if manifest.is_symlink() or manifest.stat().st_size > 4096:
+                    raise ValueError
+                self.image = json.loads(manifest.read_bytes())["image_id"]
+                spec = importlib.util.spec_from_file_location("docker_gitleaks", ROOT / "docker_gitleaks.py")
+                self.docker = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(self.docker)
+                self.docker.verify_image(self.image)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+                raise Rejected("ERROR Docker runtime unavailable or invalid") from None
         self.total = 0
 
     def scan(self, value: bytes, label: str):
@@ -81,13 +96,22 @@ class Scanner:
             raise Rejected("INCOMPLETE LFS content requires separate inspection")
         # Keep upstream MIME sniffing from silently skipping otherwise valid UTF-8 input.
         # The original bytes remain intact after a fixed non-secret text header.
-        result = run([
-            str(self.binary), "stdin", "--config", str(BUNDLE / "gitleaks.toml"),
+        arguments = [
+            "stdin", "--config", "/gitleaks.toml" if self.docker else str(BUNDLE / "gitleaks.toml"),
             "--gitleaks-ignore-path", "/dev/null", "--ignore-gitleaks-allow",
             "--redact=100", "--no-banner", "--no-color", "--log-level=error",
             "--max-decode-depth=0", "--max-archive-depth=0", "--timeout=10",
             "--exit-code=10", "--report-format=json", "--report-path=-",
-        ], data=b"source002 text input\n" + value, cwd=ROOT, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+        ]
+        data = b"source002 text input\n" + value
+        if self.docker:
+            try:
+                result = self.docker.scan(self.image, arguments, data)
+            except RuntimeError:
+                raise Rejected("ERROR Docker scan or cleanup incomplete") from None
+        else:
+            result = run([str(self.binary), *arguments], data=data, cwd=ROOT,
+                         env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
         # Neither stdout nor stderr is forwarded: even paths and error text may contain secrets.
         try:
             findings = json.loads(result.stdout)

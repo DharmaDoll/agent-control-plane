@@ -84,6 +84,28 @@ paths:
 
 Skillのコピーだけではhookは有効になりません。導入時に環境を診断し、既存hookや共有worktreeがある場合は統合方法を検討します。通常のcommit・pushでは、Git標準hookが検査を呼び出します。導入・更新・切り戻し・解除・cleanupの具体的な操作は[導入手順](skills/secret-checks/references/installation.md)、検査範囲と適用できない条件は[制限事項](skills/secret-checks/references/limitations.md)にあります。
 
+### Gitleaksはどこに配置・実行されるか
+
+新規のGitleaks／combined方式では**Dockerを優先**します。上記の`skill-installer`による取得だけではGitleaksやDockerは入りません。hook導入時に、用意した固定版バイナリを検証し、それと固定設定だけを含む最小イメージをローカルで作ります。Dockerが使えない場合は停止し、ネイティブ方式へ黙って切り替えません。
+
+| 段階 | 配置先・動作 |
+| --- | --- |
+| Skillの取得 | `<repo>/.agents/skills/secret-checks/`に手順・script等を配置。hookは未有効 |
+| バイナリの準備 | 明示した取得・一時配置先に用意。管理scriptはダウンロードしない |
+| hookの導入 | 通常は`<repo>/.git/secret-checks/bundles/<bundle-id>/`にhook・検証済みバイナリ・image IDを保存 |
+| イメージの配置 | ローカルDocker daemonがストレージを管理。コンテナ内の実行ファイルは`/gitleaks` |
+| commit／push | ホスト側で検査対象を取得し、stdinで一時コンテナへ渡す。検査後にコンテナを削除 |
+
+コンテナにはリポジトリやDockerソケットをマウントせず、ネットワークなし・非root・read-onlyで実行します。ホスト側の`bin/gitleaks`は再構築用に保持しますが、Docker方式では直接実行しません。Docker daemonとPython・Gitはホスト側に必要です。daemonのインストール、権限・PATHの変更は自動では行いません。
+
+両方の検査を導入する依頼例：
+
+> secret-checksを使って、このリポジトリにcombined方式を`--runtime docker`で導入して。固定版Gitleaksの取得元・準備場所・bundle配置先・image IDを報告して。既存の検証済みバイナリが使えるか確認し、なければ承認済みの取得手順を使って。Dockerや取得手順が使えない場合は停止し、ネイティブ方式へ切り替えないで。導入後は設定・整合性・拒否動作を検証し、解除・cleanupで何が残るかも報告して。commit・pushはしないで。
+
+既存の導入先は自動移行しません。Dockerへの変更には`update --runtime docker`を使います。Python単独方式から変更する場合は`--engine combined`と検証済みバイナリも指定します。ネイティブ方式は明示的に選んだ場合のみ利用します。
+
+`uninstall`はhookを解除し、続く`cleanup --apply`は管理対象の不要なbundleを削除します。共有され得るDockerイメージは保持してIDを報告し、元の取得ファイルやSkill本体も削除しません。イメージ削除は利用先を確認したうえで別途行います。[Docker方式の手順と制約](skills/secret-checks/references/docker.md)、[配置・取得・検証・削除の管理方針](skills/secret-checks/references/gitleaks.md)を参照してください。
+
 Python方式でGitがhookを起動し、indexとcommitメッセージの検査結果を受けて処理を続行・中止する流れは、[Python hookの実行フロー](skills/secret-checks/references/python-hook-flow.md)にまとめています。実装に基づく英語の技術文書で、ユーザー名・導入先のプロジェクト名・実際のbundle IDを含まない例を使っています。
 
 両方を連続実行するには、導入・更新時に`--engine combined`を指定します。各hookでPython → Gitleaksの順に実行し、両方が成功した場合だけcommit／pushを許可します。検出・検査不能・スキャナ欠落はいずれも拒否します。[combined方式の導入と制約](skills/secret-checks/references/combined.md)を確認してください。併用しても漏洩ゼロを保証するものではなく、既存の導入先が自動で切り替わることもありません。
@@ -122,6 +144,8 @@ SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discove
 ```
 
 binary未指定時はGitleaksの実物を必要とするケースがskipになります。[検証記録](skills/secret-checks/evals/validation.md)では、実行結果と未実施のAgent動作評価・live環境検証を区別します。このリポジトリにはスキャナー・hook・テストの正本を置き、`product-security-guidance`には設計意図と実装への参照を残します。
+
+Dockerの実物を使うテストは、上記に加えて環境変数`SECRET_CHECKS_DOCKER=1`を指定します。ローカルdaemonに検証用イメージと一時コンテナを作成するため、明示的な指定がない場合はskipします。コンテナは検査後に削除し、イメージは保持します。
 
 ## 管理方針
 
