@@ -49,6 +49,35 @@ If `SECRET_CHECKS_GITLEAKS` is absent, tests that require the real pinned binary
 explicitly skip. Skipped tests do not prove the Gitleaks engine passed. Fault
 injection tests and real-scanner tests are different evidence.
 
+## Combined engine addition (2026-10-20)
+
+The combined dispatcher and lifecycle changes were tested on the working tree
+based on `2889ee1`, using the same digest-verified Gitleaks binary above.
+
+- Full regression run: 62 tests passed with no skips (Python 14, Gitleaks 23,
+  dispatcher 6, lifecycle 19 at collection time). After strengthening the
+  combined probe and adding its regression case, the final lifecycle suite below
+  passed separately; do not interpret this as a single 63-test run.
+- Dispatcher: 6 tests passed, including all 16 combinations of successful,
+  finding, error, and unexpected child exits; order, stdin replay, argument
+  boundaries, suppressed diagnostics, missing child, and timeout handling.
+- Lifecycle manager: 20 tests passed with the real pinned binary, no skips.
+  Added coverage includes Python-to-combined update, Gitleaks binary reuse,
+  rollback, verification, cleanup, missing child refusal, and rejection when
+  Python passes but Gitleaks cannot scan an oversized input. A fault-injected
+  always-successful child was rejected by the installation probe without
+  changing the active bundle.
+- Skill structure, local Markdown links, Python syntax, and whitespace passed.
+
+Tests use inert fixtures, not issued credentials. Child diagnostics are discarded
+to prevent accidental disclosure through errors. Existing SHA-256 binary pinning
+is retained; no certificate handling, authentication, or network acquisition was
+introduced. These checks follow the skill-creator validation workflow and
+CodeGuard guidance on secret-free fixtures, structured subprocess arguments,
+bounded execution, and non-sensitive output.
+
+No target repository installation was migrated by this change.
+
 ## Limits of the evidence
 
 Skill frontmatter/reference checks do not establish agent behavior. Independent
