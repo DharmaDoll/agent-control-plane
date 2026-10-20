@@ -10,6 +10,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 | --- | --- |
 | [controlled-github](skills/controlled-github/SKILL.md) | Gitの状態確認、対象ファイルを限定したcommit、送信する全commitを確認したpush、push済みbranchからのPR作成 |
 | [spec-driven-development](skills/spec-driven-development/SKILL.md) | 要求を仕様・受入基準・小さなタスクに整理し、依頼された範囲でテスト・実装・検証・引き継ぎを進める |
+| [secret-checks](skills/secret-checks/SKILL.md) | ローカル環境と既存hookを診断し、秘密情報の検査hookを導入・検証・更新・切り戻し・解除・cleanupする |
 
 ## 導入と使い方
 
@@ -17,22 +18,25 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
+`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。標準のPython版に追加packageは不要です。Gitleaks版を選ぶ場合は、[固定版binaryの準備](skills/secret-checks/references/gitleaks.md)が必要です。
+
 ### GitHubから導入する（Codex）
 
 このリポジトリを手元にcloneせず、GitHubから取得して導入することもできます。Codexの`skill-installer`は他のGitHubリポジトリからの導入に対応しています。リポジトリ単位で使う場合の配置先は、導入先のルートにある`.agents/skills/`です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
 
-導入先リポジトリでCodexを開き、次の依頼を送ってください。配布元は[docs/japanese-readme branchのskillsディレクトリ](https://github.com/DharmaDoll/agent-control-plane/tree/docs/japanese-readme/skills)です。
+導入先リポジトリでCodexを開き、次の依頼を送ってください。配布元は[main branchのskillsディレクトリ](https://github.com/DharmaDoll/agent-control-plane/tree/main/skills)です。
 
 ```text
 $skill-installer
 
-以下のGitHubリポジトリから、2つのSkillを導入してください。
+以下のGitHubリポジトリから、3つのSkillを導入してください。
 
 repository: DharmaDoll/agent-control-plane
-ref: docs/japanese-readme
+ref: main
 paths:
 - skills/spec-driven-development
 - skills/controlled-github
+- skills/secret-checks
 
 配置先は、このリポジトリのルートにある .agents/skills/ としてください。
 各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
@@ -46,9 +50,9 @@ paths:
 - 導入後に各SkillのSKILL.mdと参照ファイルの存在を確認する
 ```
 
-片方だけ必要なら、`paths`から不要な方を外してください。リポジトリのルートにある`AGENTS.md`や`skills_plan/`を導入先へコピーする必要はありません。
+一部だけ必要なら、`paths`から不要なSkillを外してください。リポジトリのルートにある`AGENTS.md`や`skills_plan/`を導入先へコピーする必要はありません。
 
-- **branchは明示する**：`docs/japanese-readme`には`/`が含まれるため、URLの解釈に任せず、repository・ref・pathを分けて指定します。
+- **branchは明示する**：URLの解釈に任せず、repository・ref・pathを分けて指定します。`/`を含むbranch名を使う場合も同様です。
 - **配置先は明示する**：installerのデフォルト配置先に任せず、対象リポジトリへ導入します。個人の全リポジトリで共通利用したい場合は、配置先を`~/.agents/skills/`へ変更できます。同名Skillの重複配置は避けてください。
 - **取得した版は自動更新されない**：更新時は差分を確認して置き換えます。同じ版を再現したい場合は、`ref`にbranch名ではなくcommit SHAを指定します。
 
@@ -72,6 +76,14 @@ paths:
 
 小さな変更には短い確認だけを使い、複数工程の作業には[作業記録テンプレート](skills/spec-driven-development/assets/work-item.md)を必要に応じて使います。開発とGitHub操作のSkillは互いに独立しており、一方の利用がもう一方の操作許可になることはありません。
 
+秘密情報の検査を導入する場合：
+
+> secret-checksを使って、このリポジトリの環境と既存hookを確認し、適した方法で導入して。設定と拒否動作を検証し、戻し方も報告して。
+
+> secret-checksを使って、使わなくなった検査hookを解除し、管理対象の不要なbundleをcleanupして。
+
+Skillのコピーだけではhookは有効になりません。導入時に環境を診断し、既存hookや共有worktreeがある場合は統合方法を検討します。通常のcommit・pushでは、Git標準hookが検査を呼び出します。導入・更新・切り戻し・解除・cleanupの具体的な操作は[導入手順](skills/secret-checks/references/installation.md)、検査範囲と適用できない条件は[制限事項](skills/secret-checks/references/limitations.md)にあります。
+
 ## 認証と安全上の前提
 
 認証の初期設定は人間が行います。[初期設定手順](skills/controlled-github/references/setup.md)には、HTTPSで既存の`gh`認証をGit credential helper経由で使う方法を含めています。実行時にtokenを取得・表示したり、失敗を理由に認証方式を切り替えたりはしません。
@@ -91,6 +103,21 @@ python3 -B -m unittest discover -s skills/controlled-github/evals -p 'test_*.py'
 [検証記録](skills/controlled-github/evals/validation.md)では、自動テストと未実施のAgent動作評価・live GitHub検証を区別しています。Skillをコピーした後は、そのフォルダ内で `python3 -B -m unittest discover -s evals -p 'test_*.py' -v` を実行できます。
 
 `spec-driven-development`はMarkdownによる手順です。[動作評価シナリオ](skills/spec-driven-development/evals/scenarios.md)で、軽量な変更、計画のみの依頼、テストの失敗、セッション再開などを評価します。文書の形式・参照チェックと、Agentが実際に手順を守るかの評価は区別します。
+
+`secret-checks`のPython版と導入管理のテストは、使い捨てのローカルGitリポジトリで実行します。
+
+```sh
+python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_scan_sensitive.py' -v
+python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_manage_hooks.py' -v
+```
+
+Gitleaksの実物を使うテストは、照合済みbinaryを指定して実行します。
+
+```sh
+SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_*.py' -v
+```
+
+binary未指定時はGitleaksの実物を必要とするケースがskipになります。[検証記録](skills/secret-checks/evals/validation.md)では、実行結果と未実施のAgent動作評価・live環境検証を区別します。このリポジトリにはスキャナー・hook・テストの正本を置き、`product-security-guidance`には設計意図と実装への参照を残します。
 
 ## 管理方針
 

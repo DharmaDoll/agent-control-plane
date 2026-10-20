@@ -1,0 +1,3 @@
+title = "Reviewed default rules; no repository-provided configuration"
+[extend]
+useDefault = true
