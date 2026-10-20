@@ -4,6 +4,9 @@ The migrated adapter supports Gitleaks 8.30.1 for Linux x86_64. Detection rules
 belong to the external Gitleaks product; the adapter, fixed configuration, hooks,
 and tests are maintained here. No third-party binary is committed to this skill.
 
+This engine alone does not run the custom Python scanner. To require both,
+select the [combined engine](combined.md), which uses the same pinned binary.
+
 ## Acquisition and selection
 
 Use an organization-approved acquisition process to obtain the official asset:

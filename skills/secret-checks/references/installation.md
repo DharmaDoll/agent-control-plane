@@ -38,9 +38,9 @@ assuming `.git` is a directory. It stores:
 ├── state.json
 ├── lock
 └── bundles/<content-digest>/
-    ├── scripts/<selected-scanner>.py
+    ├── scripts/<selected-scanner>.py  # Combined: dispatcher and both scanners
     ├── hooks/{pre-commit,commit-msg,pre-push}
-    └── bin/gitleaks + gitleaks.toml    # Gitleaks engine only
+    └── bin/gitleaks + gitleaks.toml    # Gitleaks or combined engine
 ```
 
 The bundle ID covers the engine, generated hooks, scanner, configuration, binary
@@ -50,6 +50,10 @@ that interpreter requires an update from a reviewed environment. A bundle is
 independent of the skill's original location and is not automatically updated
 when the skill checkout changes. Digests detect drift; they are not publisher
 signatures or protection against the local account changing code and records.
+
+To require both scanners, use the [combined engine procedure](combined.md).
+Its binary must be verified before activation; existing installations are not
+automatically migrated.
 
 The manager records expected contents before copying, verifies a candidate with
 real local Git operations, then sets the local `core.hooksPath`. It reads back

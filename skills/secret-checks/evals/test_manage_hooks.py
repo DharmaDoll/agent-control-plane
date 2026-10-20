@@ -198,6 +198,85 @@ class LifecycleTests(unittest.TestCase):
         self.manage("uninstall")
         self.manage("cleanup", "--apply")
 
+    def test_combined_requires_verified_binary_before_activation(self):
+        self.manage("install")
+        before = self.state()
+        config = (self.repo / ".git/config").read_bytes()
+        self.assertEqual(self.manage("update", "--engine", "combined", ok=False)[0].returncode, 2)
+        fake = self.root / "unverified"
+        fake.write_bytes(b"not a scanner")
+        self.assertEqual(self.manage("update", "--engine", "combined", "--gitleaks",
+                                    str(fake), ok=False)[0].returncode, 2)
+        self.assertEqual(self.state(), before)
+        self.assertEqual((self.repo / ".git/config").read_bytes(), config)
+
+    def test_combined_real_lifecycle_and_missing_child(self):
+        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        if not binary:
+            self.skipTest("SECRET_CHECKS_GITLEAKS required")
+        self.manage("install")
+        original = self.state()["active"]
+        self.manage("update", "--engine", "combined", "--gitleaks", binary)
+        combined = self.state()["active"]
+        self.assertEqual(self.state()["bundles"][combined]["engine"], "combined")
+        self.manage("verify")
+        self.manage("update")
+        self.assertEqual(self.state()["active"], combined)
+        self.manage("rollback")
+        self.assertEqual(self.state()["active"], original)
+        self.manage("rollback")
+        self.assertEqual(self.state()["active"], combined)
+        self.stage()
+        safe = self.git("commit", "-q", "-m", "safe")
+        self.assertIn(b"CHECKED engine:python", safe.stderr)
+        self.assertIn(b"CHECKED engine:gitleaks", safe.stderr)
+        self.stage(("api_" + "key=" + "x" * 16).encode())
+        blocked = self.git("commit", "-q", "-m", "blocked", ok=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn(b"REJECTED engine:python", blocked.stderr)
+        self.assertIn(b"engine:gitleaks", blocked.stderr)
+        self.stage(b"a" * (2 * 1024 * 1024 + 1))
+        blocked = self.git("commit", "-q", "-m", "second engine limit", ok=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn(b"CHECKED engine:python", blocked.stderr)
+        self.assertIn(b"ERROR engine:gitleaks", blocked.stderr)
+        self.stage()
+        child = self.bundle() / "scripts/gitleaks_gate.py"
+        saved = child.read_bytes()
+        child.unlink()
+        blocked = self.git("commit", "--allow-empty", "-q", "-m", "missing child", ok=False)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn(b"ERROR engine:gitleaks", blocked.stderr)
+        child.write_bytes(saved)
+        child.chmod(0o600)
+        self.manage("uninstall")
+        self.manage("cleanup", "--apply")
+        self.assertEqual(list((self.repo / ".git/secret-checks/bundles").iterdir()), [])
+
+    def test_gitleaks_to_combined_reuses_verified_binary(self):
+        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        if not binary:
+            self.skipTest("SECRET_CHECKS_GITLEAKS required")
+        self.manage("install", "--engine", "gitleaks", "--gitleaks", binary)
+        self.manage("update", "--engine", "combined")
+        self.assertEqual(self.state()["bundles"][self.state()["active"]]["engine"], "combined")
+        self.manage("verify")
+
+    def test_combined_probe_detects_one_engine_silently_passing(self):
+        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        if not binary:
+            self.skipTest("SECRET_CHECKS_GITLEAKS required")
+        self.manage("install")
+        before = self.state()["active"]
+        copy = self.root / "faulty skill"
+        shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns("__pycache__"))
+        (copy / "scripts/gitleaks_gate.py").write_text("raise SystemExit(0)\n")
+        result, report = self.manage("update", "--engine", "combined", "--gitleaks", binary,
+                                     script=copy / "scripts/manage_hooks.py", ok=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(report["reason"], "PROBE_COMBINED_ENGINE_RESULT_MISSING")
+        self.assertEqual(self.state()["active"], before)
+
     def test_cleanup_preserves_symlinks_and_untracked_bundles(self):
         self.manage("install")
         bundle = self.bundle()

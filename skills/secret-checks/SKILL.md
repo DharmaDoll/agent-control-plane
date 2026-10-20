@@ -44,6 +44,15 @@ For Gitleaks, read [gitleaks.md](references/gitleaks.md) first. The user must se
 that engine and provide the pinned, verified binary; the manager never downloads
 software or substitutes a different engine after failure.
 
+When both scanners are requested, select `--engine combined` and read
+[combined.md](references/combined.md). Every hook runs Python then Gitleaks and
+requires both to succeed. Both engines' limitations apply; do not promise zero
+leaks or silently convert an existing installation.
+
+For an explanation of the Python engine's normal commit path, read
+[python-hook-flow.md](references/python-hook-flow.md). It traces Git's hook
+selection, index/message inspection, refusal behavior, and verification limits.
+
 Use `verify` after setup or when investigating drift. Report configuration,
 bundle integrity, and isolated hook behavior separately. The probe tests safe
 commit/push, staged secrets, message secrets, unscannable input, and a secret that

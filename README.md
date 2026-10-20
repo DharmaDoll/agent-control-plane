@@ -18,7 +18,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
-`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。標準のPython版に追加packageは不要です。Gitleaks版を選ぶ場合は、[固定版binaryの準備](skills/secret-checks/references/gitleaks.md)が必要です。
+`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。標準のPython版に追加packageは不要です。Gitleaks版または両方を使うcombined版を選ぶ場合は、[固定版binaryの準備](skills/secret-checks/references/gitleaks.md)が必要です。
 
 ### GitHubから導入する（Codex）
 
@@ -83,6 +83,10 @@ paths:
 > secret-checksを使って、使わなくなった検査hookを解除し、管理対象の不要なbundleをcleanupして。
 
 Skillのコピーだけではhookは有効になりません。導入時に環境を診断し、既存hookや共有worktreeがある場合は統合方法を検討します。通常のcommit・pushでは、Git標準hookが検査を呼び出します。導入・更新・切り戻し・解除・cleanupの具体的な操作は[導入手順](skills/secret-checks/references/installation.md)、検査範囲と適用できない条件は[制限事項](skills/secret-checks/references/limitations.md)にあります。
+
+Python方式でGitがhookを起動し、indexとcommitメッセージの検査結果を受けて処理を続行・中止する流れは、[Python hookの実行フロー](skills/secret-checks/references/python-hook-flow.md)にまとめています。実装に基づく英語の技術文書で、ユーザー名・導入先のプロジェクト名・実際のbundle IDを含まない例を使っています。
+
+両方を連続実行するには、導入・更新時に`--engine combined`を指定します。各hookでPython → Gitleaksの順に実行し、両方が成功した場合だけcommit／pushを許可します。検出・検査不能・スキャナ欠落はいずれも拒否します。[combined方式の導入と制約](skills/secret-checks/references/combined.md)を確認してください。併用しても漏洩ゼロを保証するものではなく、既存の導入先が自動で切り替わることもありません。
 
 ## 認証と安全上の前提
 

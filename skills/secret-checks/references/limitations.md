@@ -54,6 +54,11 @@ behavior are different; never substitute one engine for another after a failure.
 
 ## Trust and residual risks
 
+The [combined engine](combined.md) runs both scanners and requires both successes.
+It inherits both sets of restrictions, including Python's refusal of tag pushes
+and Gitleaks' stricter content budget. It improves coverage but shares the same
+local trust boundary and cannot guarantee absence of secrets.
+
 The local OS account, installed interpreter, Git, shell, Git configuration,
 reviewed skill copy, hook bundle and its management record are trusted. Per-file
 hashes identify content drift, not authenticity against that same account.

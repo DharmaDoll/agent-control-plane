@@ -22,7 +22,7 @@ GIT = "/usr/bin/git"
 HOOKS = ("pre-commit", "commit-msg", "pre-push")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 GITLEAKS_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
-ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py",
+ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py", "scripts/combined_gate.py",
                  "gitleaks.toml", "bin/gitleaks", *("hooks/" + h for h in HOOKS)}
 OVERRIDES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
              "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
@@ -112,7 +112,7 @@ class Repository:
                                       or value not in state["bundles"]):
                 raise Blocked("INVALID_MANAGEMENT_RECORD")
         for identity, record in state["bundles"].items():
-            if not DIGEST.fullmatch(identity) or record.get("engine") not in ("python", "gitleaks"):
+            if not DIGEST.fullmatch(identity) or record.get("engine") not in ("python", "gitleaks", "combined"):
                 raise Blocked("INVALID_MANAGEMENT_RECORD")
             files = record.get("files")
             if not isinstance(files, dict) or not files or not set(files) <= ALLOWED_FILES:
@@ -237,11 +237,15 @@ class Repository:
 
 
 def source_payload(engine, binary):
-    scanner = "scan_sensitive.py" if engine == "python" else "gitleaks_gate.py"
+    scanner = {"python": "scan_sensitive.py", "gitleaks": "gitleaks_gate.py",
+               "combined": "combined_gate.py"}[engine]
     payload = {"scripts/" + scanner: ((SKILL / "scripts" / scanner).read_bytes(), 0o600)}
+    if engine == "combined":
+        for child in ("scan_sensitive.py", "gitleaks_gate.py"):
+            payload["scripts/" + child] = ((SKILL / "scripts" / child).read_bytes(), 0o600)
     for hook in HOOKS:
         mode = {"pre-commit": "--staged", "commit-msg": '--file "$1" --label commit-message', "pre-push": "--pre-push"}[hook]
-        if engine == "gitleaks":
+        if engine in ("gitleaks", "combined"):
             mode = hook
         template = (SKILL / "assets/hooks" / hook).read_text()
         # Python consumes only the message path; pre-push's remote args are not scanner options.
@@ -250,7 +254,7 @@ def source_payload(engine, binary):
         text = template.replace("@PYTHON@", shlex.quote(str(Path(sys.executable).resolve())))
         text = text.replace("@SCANNER@", scanner).replace("@MODE@", mode)
         payload["hooks/" + hook] = (text.encode(), 0o700)
-    if engine == "gitleaks":
+    if engine in ("gitleaks", "combined"):
         if platform.machine() != "x86_64" or not binary:
             raise Blocked("VERIFIED_LINUX_X64_GITLEAKS_REQUIRED")
         path = Path(binary)
@@ -264,7 +268,7 @@ def source_payload(engine, binary):
     return payload
 
 
-def isolated_probe(hooks):
+def isolated_probe(hooks, engine=None):
     """Test the exact bundle with local Git; never commit in the target repository."""
     with tempfile.TemporaryDirectory(prefix="secret-checks-probe-") as raw:
         root = Path(raw)
@@ -276,6 +280,13 @@ def isolated_probe(hooks):
         def call(*args, allowed=(0,), data=None, location=None):
             return run([GIT, *args], cwd=location or repo, data=data, env=env, allowed=allowed)
 
+        def check_combined(result, status):
+            if engine == "combined":
+                output = result.stdout + result.stderr
+                if any((status + " engine:" + child).encode() not in output
+                       for child in ("python", "gitleaks")):
+                    raise Blocked("PROBE_COMBINED_ENGINE_RESULT_MISSING")
+
         call("init", "-q", "-b", "main", str(repo), location=root)
         call("init", "-q", "--bare", str(remote), location=root)
         call("config", "user.name", "Secret checks probe")
@@ -284,10 +295,10 @@ def isolated_probe(hooks):
         file = repo / "example.txt"
         file.write_bytes(b"safe content\n")
         call("add", "example.txt")
-        call("commit", "-q", "-m", "safe probe")
+        check_combined(call("commit", "-q", "-m", "safe probe"), "CHECKED")
         baseline = call("rev-parse", "HEAD").stdout.strip()
         # Also exercise the explicit-SHA refspec used by controlled-github.
-        call("push", "--quiet", str(remote), baseline.decode() + ":refs/heads/main")
+        check_combined(call("push", "--quiet", str(remote), baseline.decode() + ":refs/heads/main"), "CHECKED")
         canary = ("-----BEGIN " + "PRIVATE KEY-----\n" + "!invalid!" * 10 + "\n-----END " + "PRIVATE KEY-----\n").encode()
         file.write_bytes(canary)
         call("add", "example.txt")
@@ -295,16 +306,19 @@ def isolated_probe(hooks):
         rejected = call("commit", "-q", "-m", "blocked", allowed=tuple(range(256)))
         if rejected.returncode == 0 or b"REJECTED" not in rejected.stdout + rejected.stderr:
             raise Blocked("PROBE_SECRET_WAS_NOT_REJECTED")
+        check_combined(rejected, "REJECTED")
         call("add", "example.txt")
         rejected = call("commit", "-q", "-F", "-", data=canary, allowed=tuple(range(256)))
         if rejected.returncode == 0 or b"REJECTED" not in rejected.stdout + rejected.stderr:
             raise Blocked("PROBE_MESSAGE_WAS_NOT_REJECTED")
+        check_combined(rejected, "REJECTED")
         file.write_bytes(b"safe\0unscannable")
         call("add", "example.txt")
         rejected = call("commit", "-q", "-m", "incomplete", allowed=tuple(range(256)))
         diagnostic = rejected.stdout + rejected.stderr
         if rejected.returncode == 0 or not any(marker in diagnostic for marker in (b"ERROR", b"INCOMPLETE")):
             raise Blocked("PROBE_INCOMPLETE_WAS_NOT_REJECTED")
+        check_combined(rejected, "ERROR")
         # Build synthetic history without invoking commit hooks, then exercise pre-push.
         file.write_bytes(canary)
         call("add", "example.txt")
@@ -318,6 +332,7 @@ def isolated_probe(hooks):
         rejected = call("push", "--quiet", str(remote), "refs/heads/main:refs/heads/main", allowed=tuple(range(256)))
         if rejected.returncode == 0 or b"REJECTED" not in rejected.stdout + rejected.stderr:
             raise Blocked("PROBE_HISTORY_WAS_NOT_REJECTED")
+        check_combined(rejected, "REJECTED")
         if call("rev-parse", "refs/heads/main", location=remote).stdout.strip() != baseline:
             raise Blocked("PROBE_REMOTE_CHANGED")
         for output in (rejected.stdout, rejected.stderr):
@@ -338,9 +353,10 @@ def activate(repo, action, engine, binary):
     elif action == "update":
         raise Blocked("NOT_INSTALLED")
     chosen = engine or (state["bundles"][state["active"]]["engine"] if state and state["active"] else "python")
-    if binary is not None and chosen != "gitleaks":
+    if binary is not None and chosen not in ("gitleaks", "combined"):
         raise Blocked("GITLEAKS_BINARY_REQUIRES_GITLEAKS_ENGINE")
-    if state and state["active"] and engine is None and chosen == "gitleaks" and binary is None:
+    if (state and state["active"] and chosen in ("gitleaks", "combined") and binary is None
+            and state["bundles"][state["active"]]["engine"] in ("gitleaks", "combined")):
         binary = repo.bundles / state["active"] / "bin/gitleaks"
     payload = source_payload(chosen, binary)
     files = {name: {"sha256": hashlib.sha256(data).hexdigest(), "mode": mode} for name, (data, mode) in payload.items()}
@@ -371,7 +387,7 @@ def activate(repo, action, engine, binary):
                 with target.open("xb") as stream:
                     stream.write(data)
                 target.chmod(mode)
-        isolated_probe(path / "hooks")
+        isolated_probe(path / "hooks", chosen)
         if not repo.bundle_clean(identity, state["bundles"][identity]):
             raise Blocked("PREPARED_BUNDLE_CHANGED")
         repo.assert_config(state)
@@ -415,7 +431,7 @@ def managed_operation(repo, action, apply):
                 raise Blocked("NOT_INSTALLED")
             if not repo.bundle_clean(active, state["bundles"][active]):
                 raise Blocked("ACTIVE_BUNDLE_MODIFIED")
-            isolated_probe(repo.bundles / active / "hooks")
+            isolated_probe(repo.bundles / active / "hooks", state["bundles"][active]["engine"])
             repo.assert_config(state)
             return {"status": "PASS", "configuration": "PASS", "integrity": "PASS", "isolated_hooks": "PASS"}
         if action == "uninstall":
@@ -440,7 +456,7 @@ def managed_operation(repo, action, apply):
                 raise Blocked("NO_ROLLBACK_VERSION")
             if not repo.bundle_clean(previous, state["bundles"][previous]):
                 raise Blocked("ROLLBACK_BUNDLE_MODIFIED")
-            isolated_probe(repo.bundles / previous / "hooks")
+            isolated_probe(repo.bundles / previous / "hooks", state["bundles"][previous]["engine"])
             repo.assert_config(state)
             git(repo.repo, "config", "--local", "core.hooksPath", str(repo.bundles / previous / "hooks"))
             state["active"], state["previous"] = previous, active
@@ -502,7 +518,7 @@ def main():
         parser = Parser(description=__doc__)
         parser.add_argument("action", choices=("inspect", "install", "verify", "update", "rollback", "uninstall", "cleanup"))
         parser.add_argument("--repo", type=Path, required=True)
-        parser.add_argument("--engine", choices=("python", "gitleaks"))
+        parser.add_argument("--engine", choices=("python", "gitleaks", "combined"))
         parser.add_argument("--gitleaks", type=Path)
         parser.add_argument("--apply", action="store_true", help="Delete cleanup candidates; otherwise preview only")
         args = parser.parse_args()
