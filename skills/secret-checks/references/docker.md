@@ -49,7 +49,7 @@ and the daemon and reviewed build procedure remain trusted.
 ## Scan invocation and failure
 
 Git object enumeration and the custom Python scanner remain on the host.
-The shared [image allowance](images-and-publication.md) uses only extensions and
+The shared [image allowance](images-and-publication.md) checks extensions, headers and
 byte budgets on the host. No decoder or worker runs. The Gitleaks image does not
 receive content exempted by the image-extension policy.
 Only the Gitleaks detector runs in Docker. All inputs for one hook are independently

@@ -21,6 +21,20 @@ def png():
             + chunk(b'IDAT', zlib.compress(b'\0\0\0\0')) + chunk(b'IEND', b''))
 
 
+def ftyp(major=b'heic', compatible=b'mif1', *, extended=False):
+    body = major + b'\0' * 4 + compatible
+    if extended:
+        return struct.pack('>I4sQ', 1, b'ftyp', 16 + len(body)) + body
+    return struct.pack('>I4s', 8 + len(body), b'ftyp') + body
+
+
+# Synthetic recognition fixtures, intentionally not decodable image files.
+HEADERS = {'.png': b'\x89PNG\r\n\x1a\n', '.jpg': b'\xff\xd8\xff',
+           '.jpeg': b'\xff\xd8\xff', '.webp': b'RIFF\x10\0\0\0WEBPVP8 ',
+           '.bmp': b'BM' + b'\0' * 12, '.gif': b'GIF89a',
+           '.tif': b'II*\0', '.tiff': b'MM\0*', '.heic': ftyp()}
+
+
 class PublicationRegressionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='publication-test-')
@@ -48,6 +62,15 @@ class PublicationRegressionTests(unittest.TestCase):
         result = self.scan('--staged')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b'images_allowed:1', result.stdout)
+
+    def test_bad_image_header_is_incomplete_without_disclosure(self):
+        (self.repo / 'disguised.png').write_bytes(b'private fixture contents')
+        self.git('add', '--', 'disguised.png')
+        result = self.scan('--staged')
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b'image-signature-mismatch', result.stderr)
+        self.assertNotIn(b'private fixture contents', result.stdout + result.stderr)
+        self.assertNotIn(b'disguised.png', result.stdout + result.stderr)
 
     def test_101_changed_paths_refuse_even_when_blob_is_shared(self):
         for n in range(101):
@@ -131,7 +154,7 @@ class PublicationRegressionTests(unittest.TestCase):
 class BudgetTests(unittest.TestCase):
     def test_extension_allowance_never_launches_decoder(self):
         with patch.object(policy.subprocess, 'run', side_effect=AssertionError('no image subprocess')):
-            self.assertTrue(policy.Images().allow('photo.PNG', b'not an image\0'))
+            self.assertTrue(policy.Images().allow('photo.PNG', png()))
             self.assertFalse(policy.Images().allow('drawing.svg', b'<svg><script/></svg>'))
 
     def test_boundaries(self):
@@ -148,9 +171,13 @@ class BudgetTests(unittest.TestCase):
 
 
 class ImageAllowanceTests(unittest.TestCase):
-    def test_extensions_are_case_insensitive_and_content_is_unchecked(self):
-        for suffix in ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff', '.heic'):
-            for data in (b'', b'not an image', b'\0binary', png()[:30]):
+    def test_plain_text_disguised_as_png_is_refused(self):
+        with self.assertRaisesRegex(policy.PolicyError, '^image-signature-mismatch$'):
+            policy.Images().allow('disguised.png', b'ordinary text, not PNG')
+
+    def test_extensions_are_case_insensitive_and_body_is_unchecked(self):
+        for suffix, header in HEADERS.items():
+            for data in (header, header + b'not decoded\0'):
                 with self.subTest(suffix=suffix, data_length=len(data)):
                     images = policy.Images()
                     self.assertTrue(images.allow('image' + suffix.upper(), data))
@@ -159,21 +186,59 @@ class ImageAllowanceTests(unittest.TestCase):
         for name in ('image.svg', 'image.png.txt', 'image.zip', 'image'):
             self.assertFalse(policy.Images().allow(name, b'anything'))
 
+    def test_empty_short_wrong_headers_and_cache_context_refuse(self):
+        for suffix, header in HEADERS.items():
+            for data in (b'', b'not an image', header[:-1], b'prefix' + header):
+                with self.subTest(suffix=suffix, data=data):
+                    with self.assertRaisesRegex(policy.PolicyError, '^image-signature-mismatch$'):
+                        policy.Images().allow('image' + suffix, data)
+        images = policy.Images()
+        images.allow('good.png', png())
+        with self.assertRaisesRegex(policy.PolicyError, '^image-signature-mismatch$'):
+            images.allow('wrong.jpg', png())
+
+    def test_header_variants(self):
+        variants = {'.gif': (b'GIF87a', b'GIF89a'),
+                    '.tiff': (b'II*\0', b'MM\0*', b'II+\0\x08\0\0\0', b'MM\0+\0\x08\0\0'),
+                    '.webp': tuple(b'RIFF\x10\0\0\0WEBP' + v for v in (b'VP8 ', b'VP8L', b'VP8X'))}
+        for suffix, headers in variants.items():
+            for header in headers:
+                self.assertTrue(policy.Images().allow('image' + suffix, header))
+        for data in (b'RIFF\x10\0\0\0WAVEVP8 ', b'RIFF\x10\0\0\0WEBPjunk'):
+            with self.assertRaises(policy.PolicyError):
+                policy.Images().allow('image.webp', data)
+
+    def test_heic_brands_and_bounded_box(self):
+        for brand in (b'heic', b'heix', b'heim', b'heis', b'hevc', b'hevx', b'hevm', b'hevs'):
+            for extended in (False, True):
+                self.assertTrue(policy.Images().allow('image.heic', ftyp(brand, extended=extended)))
+                self.assertTrue(policy.Images().allow('image.heic', ftyp(b'mif1', brand, extended=extended)))
+        self.assertTrue(policy.Images().allow('image.heic', ftyp(compatible=b'mif1' * 1020)))
+        invalid = (ftyp(b'mif1', b'msf1'), ftyp(b'avif', b'mif1'), ftyp(b'isom', b'mp42'),
+                   ftyp(b'mif1', b'mif1') + b'heic', ftyp(b'mif1', b'xheicxxx'),
+                   b'\0\0\0\0' + ftyp()[4:], b'\xff' * 4 + ftyp()[4:],
+                   ftyp()[:-1], ftyp(compatible=b'mif1' * 1021),
+                   ftyp(b'mif1', b'mif1')[:12] + b'heic' + b'mif1')
+        for data in invalid:
+            with self.subTest(data_length=len(data)), self.assertRaises(policy.PolicyError):
+                policy.Images().allow('image.heic', data)
+
     def test_image_byte_and_aggregate_limits(self):
         images = policy.Images()
-        self.assertTrue(images.allow('exact.png', b'x' * policy.IMAGE_BYTES))
+        header = HEADERS['.png']
+        self.assertTrue(images.allow('exact.png', header + b'x' * (policy.IMAGE_BYTES - len(header))))
         with self.assertRaisesRegex(policy.PolicyError, 'image-bytes-limit'):
             images.allow('large.png', b'x' * (policy.IMAGE_BYTES + 1))
-        with patch.object(policy, 'PUSH_BYTES', 3):
+        with patch.object(policy, 'PUSH_BYTES', len(header)):
             images = policy.Images()
-            images.allow('a.png', b'abc')
+            images.allow('a.png', header)
             with self.assertRaisesRegex(policy.PolicyError, 'image-scan-budget'):
-                images.allow('b.png', b'd')
+                images.allow('b.png', header + b'd')
         images = policy.Images()
         for n in range(1000):
-            images.allow('a.png', str(n).encode())
+            images.allow('a.png', header + str(n).encode())
         with self.assertRaisesRegex(policy.PolicyError, 'image-scan-budget'):
-            images.allow('a.png', b'new')
+            images.allow('a.png', header + b'new')
 
     def test_svg_is_not_parsed_or_exempted(self):
         svg = b'<!DOCTYPE svg><svg><script>example()</script></svg>'
@@ -198,7 +263,7 @@ class RealImageHookTests(unittest.TestCase):
             target.chmod(mode)
         for suffix, kind in (('.png', 'PNG'), ('.jpg', 'JPEG'), ('.webp', 'WEBP'), ('.bmp', 'BMP'),
                               ('.gif', 'GIF'), ('.tiff', 'TIFF'), ('.heic', 'HEIF')):
-            fixture.write('diagram' + suffix, b'\0uninspected image bytes ' + kind.encode())
+            fixture.write('diagram' + suffix, HEADERS[suffix])
         fixture.write('diagram.svg', b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"/>')
         result = fixture.commit()
         self.assertIn(b'images_allowed:7', result.stdout + result.stderr)
@@ -211,8 +276,11 @@ class RealImageHookTests(unittest.TestCase):
         self.assertIn(b'REJECTED engine:python', blocked.stderr)
         self.assertIn(b'REJECTED engine:gitleaks', blocked.stderr)
         fixture.git('rm', '--cached', '--', 'canary.txt')
-        fixture.write('renamed.jpg', png())  # Extension alone determines allowance.
-        fixture.commit()
+        fixture.write('renamed.jpg', png())
+        blocked = fixture.commit(ok=False)
+        self.assertIn(b'DETAIL engine:python ERROR policy image-signature-mismatch', blocked.stderr)
+        self.assertIn(b'DETAIL engine:gitleaks ERROR policy image-signature-mismatch', blocked.stderr)
+        fixture.git('rm', '--cached', '--', 'renamed.jpg')
         fixture.write('renamed.txt', png())  # No exemption by blob identity alone.
         blocked = fixture.commit(ok=False)
         self.assertIn(b'ERROR engine:gitleaks', blocked.stderr)

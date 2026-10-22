@@ -24,7 +24,7 @@ def diagnostics(script, output):
              'object-metadata-incomplete|object-metadata-invalid|unsupported-index|'
              'index-changed-during-check|invalid-index-object|hook-input-limit|'
              'invalid-hook-input|invalid-object-id|unsupported-ref|invalid-object-enumeration|'
-             'image-bytes-limit|image-scan-budget')
+             'image-bytes-limit|image-scan-budget|image-signature-mismatch')
     allowed = re.compile(rb'(?:ERROR policy (?:(?:' + codes.encode() + rb')|'
                          rb'(?:commit|push)-(?:files|bytes) actual:[0-9]{1,12} limit:[0-9]{1,12})|'
                          rb'POLICY images_allowed:[0-9]{1,4} image_content:unscanned)')

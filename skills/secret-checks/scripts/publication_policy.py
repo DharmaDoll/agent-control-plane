@@ -1,4 +1,4 @@
-"""Publication budgets and explicit extension-based image-content allowance."""
+"""Publication budgets and extension/header-based image-content allowance."""
 from __future__ import annotations
 
 import hashlib
@@ -126,6 +126,40 @@ def image_format(path):
     return FORMATS.get(PurePosixPath(path).suffix.lower())
 
 
+def image_signature_matches(kind, data):
+    """Cheap header recognition only, not decoding or proof of safe contents."""
+    if kind == 'PNG':
+        return data.startswith(b'\x89PNG\r\n\x1a\n')
+    if kind == 'JPEG':
+        return data.startswith(b'\xff\xd8\xff')
+    if kind == 'GIF':
+        return data.startswith((b'GIF87a', b'GIF89a'))
+    if kind == 'BMP':
+        return len(data) >= 14 and data.startswith(b'BM')
+    if kind == 'TIFF':
+        return (data.startswith((b'II*\0', b'MM\0*'))
+                or data.startswith((b'II+\0\x08\0\0\0', b'MM\0+\0\x08\0\0')))
+    if kind == 'WEBP':
+        return (data[:4] == b'RIFF' and data[8:12] == b'WEBP'
+                and data[12:16] in (b'VP8 ', b'VP8L', b'VP8X'))
+    if kind == 'HEIF':
+        # Inspect only the first ftyp box. Bound work independently of its
+        # untrusted declared size; never search arbitrary payload for a brand.
+        if len(data) < 16 or data[4:8] != b'ftyp':
+            return False
+        size = int.from_bytes(data[:4], 'big')
+        start = 8
+        if size == 1:  # ISO BMFF extended-size box.
+            size = int.from_bytes(data[8:16], 'big')
+            start = 16
+        if not start + 8 <= size <= min(len(data), 4096) or (size - start) % 4:
+            return False
+        brands = {b'heic', b'heix', b'heim', b'heis', b'hevc', b'hevx', b'hevm', b'hevs'}
+        return (data[start:start + 4] in brands
+                or any(data[i:i + 4] in brands for i in range(start + 8, size, 4)))
+    return False
+
+
 class Images:
     def __init__(self):
         self.checked = set()
@@ -133,12 +167,14 @@ class Images:
         self.bytes = 0
 
     def allow(self, path, data):
-        """Allow listed extensions within byte budgets, without inspecting content."""
+        """Allow matching extension/header pairs within the existing byte budgets."""
         kind = image_format(path)
         if kind is None:
             return False
         if len(data) > IMAGE_BYTES:
             raise PolicyError('image-bytes-limit')
+        if not image_signature_matches(kind, data):
+            raise PolicyError('image-signature-mismatch')
         key = (kind, hashlib.sha256(data).digest())
         if key not in self.checked:
             self.bytes += len(data)

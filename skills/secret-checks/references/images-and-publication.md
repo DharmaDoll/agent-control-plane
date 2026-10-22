@@ -7,20 +7,46 @@ publication, not to validate image format or rendering safety. Earlier decoder
 checks added native dependencies and a dedicated Python environment beyond that
 goal. The current policy uses the existing Python standard library only.
 
-## Extension-based allowance
+## Extension and header allowance
 
-Files with these case-insensitive final suffixes receive an explicit content
-exemption: `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.gif`,
+Files with these case-insensitive final suffixes and matching headers receive a
+content-scanning exemption: `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.gif`,
 `.tif`, `.tiff`, and `.heic`. SVG is not exempt: it remains ordinary text
 subject to the existing secret checks and text limits.
 
-No magic-byte, decode, corruption, pixel-count, frame-count or page-count checks
-are performed. Even empty or incorrectly named contents are allowed within the
-byte budgets. This is not a static-image-only policy. Each exempted input is
+Only the header checks below are performed; there is no decoding, corruption,
+pixel-count, frame-count or page-count validation. Empty, mismatched or insufficient
+headers refuse with `image-signature-mismatch` (exit 2), without falling back to
+an exemption or text scanning. This is not a static-image-only policy. Each exempted input is
 limited to 5 MiB. Per engine, image accounting retains a 50 MiB / 1,000 distinct
 extension-family/content-pair budget; aliases such as jpg/jpeg share a family.
 Repeated identical contents in a family are counted once for this accounting.
 The commit/push publication counts below are independent and still include images.
+
+| Family | Recognition rule (offsets start at zero) |
+| --- | --- |
+| PNG | Eight-byte `89 50 4e 47 0d 0a 1a 0a` signature |
+| JPEG | `ff d8 ff` prefix; no JFIF-only restriction |
+| GIF | `GIF87a` or `GIF89a` prefix |
+| BMP | `BM` prefix with at least 14 bytes available |
+| TIFF | Classic little/big-endian `49 49 2a 00` / `4d 4d 00 2a`; BigTIFF eight-byte prefix with version 43, offset width 8 and reserved zero |
+| WebP | `RIFF` at offset 0, `WEBP` at 8, and `VP8 ` / `VP8L` / `VP8X` at 12 |
+| HEIC | First box must be `ftyp`; major or aligned compatible brand must be `heic`, `heix`, `heim`, `heis`, `hevc`, `hevx`, `hevm` or `hevs` |
+
+HEIC recognition reads at most 4,096 bytes of the first box. Both 32-bit and
+extended 64-bit box sizes are supported; zero, undersized, unaligned, truncated
+or over-limit boxes refuse. The minor-version field is not a brand. Generic
+`mif1`/`msf1`, AVIF and MP4 brands alone do not qualify. No later box is searched;
+unusual legitimate files outside this header policy may be refused. File sizes,
+offsets and structures beyond these identifiers are not validated.
+
+Format references: [PNG specification](https://www.w3.org/TR/png-3/),
+[JPEG signature recognition](https://mimesniff.spec.whatwg.org/#matching-an-image-type-pattern),
+[GIF specification](https://www.w3.org/Graphics/GIF/spec-gif89a.txt),
+[BMP header](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapfileheader),
+[TIFF/BigTIFF headers](https://libtiff.gitlab.io/libtiff/specification/bigtiff.html),
+[WebP container](https://developers.google.com/speed/webp/docs/riff_container),
+and [registered HEIF brands](https://mp4ra.org/registered-types/brands).
 
 Names remain subject to ordinary filename/secret-pattern checks. Exempted content
 is not sent to either text secret detector. Messages and refs never receive the
@@ -29,7 +55,8 @@ must still undergo text scanning for the latter path.
 
 The diagnostic `POLICY images_allowed:N image_content:unscanned` reports distinct
 allowed family/content pairs, not certified images or necessarily path count.
-No image decoder process, network API, OCR or external Python package is used.
+Header comparisons use bytes and integer operations only. No image decoder
+process, network API, OCR or external Python package is used.
 Git and Gitleaks keep their existing execution and error boundaries.
 
 ## Installation and legacy environments
@@ -82,6 +109,7 @@ Diagnostics contain only fixed codes and counters, for example:
 ```text
 ERROR policy commit-files actual:101 limit:100
 ERROR policy image-bytes-limit
+ERROR policy image-signature-mismatch
 ```
 
 Combined mode forwards only allowlisted policy lines with an engine label. Other
@@ -91,14 +119,15 @@ permits Git to continue.
 
 ## Verification and unsuitable uses
 
-Test every listed extension, uppercase suffixes, arbitrary/corrupt bytes, empty
-inputs, size and aggregate limits, unchanged paths, secret-like filenames,
+Test every listed extension, uppercase suffixes, matching/mismatched/truncated
+headers, empty inputs, HEIC box bounds and brands, size and aggregate limits, unchanged paths, secret-like filenames,
 message inputs, SVG secret detection, and the same blob under image/text names.
 Test installation/update/verify using Python without third-party packages.
 Exercise combined mode and the selected Docker runtime separately.
 
-Extension-based exemption deliberately accepts files that are not valid images,
-animation, multipage files and payloads disguised as images. It does not inspect
+Header recognition can accept invalid images and payloads with forged headers;
+it is only a guard against obvious mislabeling. Animation and multipage files
+remain allowed. It does not inspect
 pixels, metadata, OCR text, QR codes, embedded resources, or personal records.
 SVG receives text secret checks, not XML parsing, rendering or sanitization:
 scripts, external references and encoded content are not comprehensively checked.

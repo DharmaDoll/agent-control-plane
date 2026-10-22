@@ -114,7 +114,7 @@ Use the full [lifecycle procedure](installation.md) rather than manual deletion.
 ## Scope and limits
 
 The adapter first applies [publication budgets and image allowances](images-and-publication.md).
-Allowed image-extension blobs are not passed to the Go text detector; their names
+Image blobs with allowed extensions and matching headers bypass the Go text detector; their names
 still are. SVG passes through normal text scanning without structural parsing. The
 Go protocol, binary pin and one-detector-per-hook execution are unchanged.
 

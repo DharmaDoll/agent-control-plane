@@ -8,11 +8,11 @@ description: Inspect a local Git repository and install, verify, update, roll ba
 Set up repository-local secret checks using the bundled scanner and standard Git
 hooks. This directory is the canonical, self-contained implementation. Requires
 Linux (including WSL2), Git at `/usr/bin/git`, Python 3.10+, and POSIX shell.
-Image allowances use extensions and byte budgets only; no decoder, additional
+Image allowances use extensions, matching headers and byte budgets; no decoder, additional
 Python packages or dedicated environment is needed. Read
 [images-and-publication.md](references/images-and-publication.md) before setup
 or diagnosing budget refusals. Image contents are explicitly unscanned; this
-does not establish their format, integrity, static nature or absence of PII.
+only checks format identifiers, not integrity, static nature or absence of PII.
 
 ## Start from the request and local evidence
 

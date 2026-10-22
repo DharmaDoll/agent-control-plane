@@ -1,7 +1,7 @@
 # Gitleaks hook execution and Go runner
 
 The current adapter also enforces [publication budgets and image allowances](images-and-publication.md).
-Content with allowed image extensions is unscanned without format checks and is not framed
+Content with allowed image extensions and matching headers is unscanned and is not framed
 for the Go text runner. SVG still enters text scanning. The execution path below
 describes the remaining text inputs; the Go protocol and detector are unchanged.
 

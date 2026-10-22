@@ -78,7 +78,7 @@ these recorded files just like single-engine bundles.
 ## Scope and residual risks
 
 Both adapters apply [image allowances and publication budgets](images-and-publication.md).
-Allowed image extensions skip content detection, without format/decoder checks.
+Allowed image extensions with matching headers skip content detection; no decoding occurs.
 SVG remains ordinary text-scanned. No image packages or worker processes are
 needed; Gitleaks keeps its chosen runtime.
 

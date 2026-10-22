@@ -1,6 +1,31 @@
 # Secret checks implementation record
 
+## Header recognition without image dependencies (2026-10-23)
+
+Scope: add a standard-library-only header check before granting image content
+exemptions. This supersedes extension-only recognition below, not the removal of
+decoders. All existing PNG/JPEG/WebP/BMP/GIF/TIFF/HEIC extensions remain supported;
+SVG remains ordinary secret-scanned text. No deployment or Git publication is
+authorized by this implementation task.
+
+Acceptance: matching signatures pass within existing budgets; empty, insufficient
+or mismatched headers refuse with fixed `image-signature-mismatch` and exit 2.
+Both engines share the check and combined mode forwards its redacted diagnostic.
+TIFF includes both byte orders and BigTIFF; HEIC checks a bounded first ftyp box
+with major/compatible HEVC-image brands, not arbitrary brand-like payload bytes.
+The complete recognition policy and specification links live in
+[images-and-publication.md](../skills/secret-checks/references/images-and-publication.md).
+
+The regression for plain text renamed to PNG failed against the extension-only
+implementation because no PolicyError was raised. Add the shared check, revise
+fixtures to matching headers, then verify boundaries and real combined hooks.
+No image decoding, corruption checking, XML parsing, OCR, dependencies or new
+processes are introduced. A forged matching header can still bypass content
+inspection; this detects obvious mislabeling, not malicious images or PII.
+
 ## Extension-based image allowance (2026-10-23)
+
+Historical: the header-recognition section above supersedes extension-only acceptance.
 
 This supersedes the decoder policy in the historical static-images section below.
 The purpose is to limit accidental bulk publication, not certify image validity.

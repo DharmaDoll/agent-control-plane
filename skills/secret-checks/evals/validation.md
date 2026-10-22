@@ -384,6 +384,37 @@ boundary. Skill-creator kept the revised procedure self-contained; CodeGuard
 informed explicit content-exemption risks, fixed diagnostics and preserved
 publication limits. Extension allowance is not format or PII validation.
 
+## Standard-library image header recognition (2026-10-23)
+
+Working tree based on `ca394e9`: extension-only recognition is superseded by
+extension plus header checks for all seven image families. No decoder packages,
+dedicated Python runtime or network lookup is added. PNG, GIF, BMP, TIFF/BigTIFF,
+WebP and HEIF identifiers were checked against the specifications linked in the
+image policy; JPEG uses the WHATWG image-signature pattern.
+
+Test first: `test_plain_text_disguised_as_png_is_refused` failed on the previous
+implementation with `PolicyError not raised`. After implementation, the focused
+image suite ran 19 tests in 6.086 seconds: 18 passed, one real-runner test skipped
+because its opt-in artifact was not selected for that run. This used Python
+3.10.4 with PIL, pillow_heif and defusedxml absent. Synthetic header fixtures
+deliberately need not decode: passing them establishes header recognition only.
+
+Coverage includes all extensions, case folding, short/empty/mismatched headers,
+classic/BigTIFF byte orders, GIF versions, WebP chunk variants, HEIC major and
+compatible brands, normal/extended box sizes, the 4,096-byte boundary, misplaced
+brand-like bytes, fixed diagnostics, existing budgets and SVG secret checks.
+The combined integration fixture checks both engines refuse a PNG named JPEG.
+The full suite with pinned runner/CLI artifacts and Docker/legacy opt-ins passed
+all 117 tests in 426.528 seconds, with no skips. This includes the real combined
+Docker commit/push fixture, default scheduling, lifecycle and historical rollback.
+No runtime code or executable tests changed after this run.
+Spec-driven development supplied the negative regression; CodeGuard informed
+bounded parsing, no raw-input logging and the explicit limits of magic checking.
+No credentials, certificates or cryptographic changes were introduced.
+
+Skill structure, 18 Python AST parses, 86 local documentation links and diff
+whitespace checks passed. No production deployment or commit/push was performed.
+
 ## Limits of the evidence
 
 Skill frontmatter/reference checks do not establish agent behavior. Independent

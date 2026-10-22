@@ -18,7 +18,7 @@ maintained scanner code, hooks, configuration, and executable tests.
 ## Python engine
 
 Both engines apply [image allowances and publication budgets](images-and-publication.md).
-Allowed image extensions exempt contents without format checks; SVG remains text-scanned.
+Allowed image extensions exempt contents after header recognition, not decoding; SVG remains text-scanned.
 The text-only restrictions below apply to all other input.
 
 - Uses Python's standard library and the inherited example's 12 explicit secret
