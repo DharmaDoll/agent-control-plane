@@ -123,7 +123,7 @@ class DockerLiveTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         binary = os.environ["SECRET_CHECKS_RUNNER"]
         _, installed = fixture.manage("install", "--engine", "combined",
-                                       "--gitleaks-runner", binary)
+                                       "--gitleaks-runner", binary, "--commit-gitleaks", "on")
         self.assertEqual(installed["runtime"], "docker")
         _, inspection = fixture.manage("inspect")
         self.assertEqual(inspection["runtime"], "docker")

@@ -113,6 +113,11 @@ Use the full [lifecycle procedure](installation.md) rather than manual deletion.
 
 ## Scope and limits
 
+The adapter first applies [publication budgets and image validation](images-and-publication.md).
+Validated raster blobs are not passed to the Go text detector; their names still
+are. SVG is structurally checked and passed through normal text scanning. The
+Go protocol, binary pin and one-detector-per-hook execution are unchanged.
+
 `pre-commit` scans every regular index blob and its path. `commit-msg` scans the
 message file. `pre-push` scans the full commit/tree/blob/annotated-tag reachability
 of each updated tip and destination ref metadata, including existing reachable
@@ -130,7 +135,7 @@ stdin, 64 MiB framed transport, and 4 MiB accepted report. Git subprocesses and
 Docker management calls retain their 15-second limit. Each input has a 10-second
 detector deadline; the batch uses only the remaining 120-second hook budget.
 Exact-container cleanup is attempted even after timeout, with its own bounded
-management call. Non-UTF-8/control input, archives,
+management call. Non-UTF-8/control input other than validated raster images, archives,
 LFS pointers, symlinks, submodules, shallow/partial clones, missing objects and
 unsupported ref namespaces cause rejection as incomplete. Large existing histories
 may consistently exceed these limits; use an appropriate alternative design

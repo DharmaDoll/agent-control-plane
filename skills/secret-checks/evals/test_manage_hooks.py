@@ -34,7 +34,10 @@ class LifecycleTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, "Git operation failed; output suppressed")
         return r
 
-    def manage(self, action, *args, ok=True, script=MANAGER):
+    def manage(self, action, *args, ok=True, script=MANAGER, default_python=True):
+        # Existing lifecycle fixtures exercise explicitly selected Python mode.
+        if default_python and action == 'install' and '--engine' not in args:
+            args = (*args, '--engine', 'python')
         r = subprocess.run([sys.executable, "-B", str(script), action, "--repo", str(self.repo), *args],
                            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         if ok:
@@ -198,6 +201,70 @@ class LifecycleTests(unittest.TestCase):
         self.manage("uninstall")
         self.manage("cleanup", "--apply")
 
+    def test_default_combined_schedule_and_explicit_opt_in(self):
+        binary = os.environ.get('SECRET_CHECKS_RUNNER')
+        if not binary:
+            self.skipTest('SECRET_CHECKS_RUNNER required')
+        runtime = 'docker' if os.environ.get('SECRET_CHECKS_DOCKER') == '1' else 'native'
+        _, installed = self.manage('install', '--runtime', runtime, '--gitleaks-runner', binary,
+                                   default_python=False)
+        self.assertEqual(installed['engine'], 'combined')
+        off = self.state()['active']
+        self.assertFalse(self.manage('inspect')[1]['commit_gitleaks'])
+        self.stage()
+        result = self.git('commit', '-qm', 'safe')
+        self.assertEqual(result.stderr.count(b'SKIPPED engine:gitleaks'), 2)
+        self.assertNotIn(b'CHECKED engine:gitleaks', result.stderr)
+        # Missing runner must not affect commit, but must block an actual push.
+        scanner = self.bundle() / 'bin/gitleaks-runner'
+        saved = scanner.read_bytes()
+        scanner.unlink()
+        self.git('commit', '--allow-empty', '-qm', 'safe without detector')
+        remote = self.root / 'remote.git'
+        self.git('init', '--bare', '-q', str(remote))
+        result = self.git('push', str(remote), 'HEAD:refs/heads/main', ok=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b'ERROR engine:gitleaks', result.stderr)
+        scanner.write_bytes(saved)
+        scanner.chmod(0o700)
+        self.manage('update', '--commit-gitleaks', 'on')
+        on = self.state()['active']
+        self.assertNotEqual(on, off)
+        self.assertTrue(self.manage('inspect')[1]['commit_gitleaks'])
+        result = self.git('commit', '--allow-empty', '-qm', 'both detectors')
+        self.assertEqual(result.stderr.count(b'CHECKED engine:gitleaks'), 2)
+        self.manage('update')
+        self.assertEqual(self.state()['active'], on)
+        self.manage('rollback')
+        self.assertEqual(self.state()['active'], off)
+        self.manage('verify')
+        self.manage('update', '--commit-gitleaks', 'off')
+        self.assertEqual(self.state()['active'], off)
+
+    def test_schedule_option_rejects_other_engines_and_read_only_actions(self):
+        for action, args in (('install', ('--engine', 'python')), ('inspect', ())):
+            result, _ = self.manage(action, *args, '--commit-gitleaks', 'off', ok=False)
+            self.assertEqual(result.returncode, 2)
+            self.assertFalse((self.repo / '.git/secret-checks').exists())
+
+    def test_new_default_requires_runner_without_python_fallback(self):
+        result, report = self.manage('install', default_python=False, ok=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(report['reason'], 'VERIFIED_GITLEAKS_RUNNER_REQUIRED')
+        self.assertFalse((self.repo / '.git/secret-checks').exists())
+
+    def test_legacy_combined_schedule_is_on_without_executing_source(self):
+        from test_gitleaks_gate import manage_hooks
+        bundle = self.root / 'legacy'
+        (bundle / 'scripts').mkdir(parents=True)
+        dispatcher = bundle / 'scripts/combined_gate.py'
+        dispatcher.write_text('raise RuntimeError("must not execute")\n')
+        self.assertTrue(manage_hooks.commit_gitleaks_enabled(bundle))
+        dispatcher.write_text('COMMIT_GITLEAKS = False\n')
+        self.assertFalse(manage_hooks.commit_gitleaks_enabled(bundle))
+        dispatcher.write_text('COMMIT_GITLEAKS = True\n')
+        self.assertTrue(manage_hooks.commit_gitleaks_enabled(bundle))
+
     def test_combined_requires_verified_binary_before_activation(self):
         self.manage("install")
         before = self.state()
@@ -235,7 +302,8 @@ class LifecycleTests(unittest.TestCase):
             self.skipTest("SECRET_CHECKS_RUNNER required")
         self.manage("install")
         original = self.state()["active"]
-        self.manage("update", "--engine", "combined", "--gitleaks-runner", binary)
+        self.manage("update", "--engine", "combined", "--gitleaks-runner", binary,
+                    "--commit-gitleaks", "on")
         combined = self.state()["active"]
         self.assertEqual(self.state()["bundles"][combined]["engine"], "combined")
         self.manage("verify")

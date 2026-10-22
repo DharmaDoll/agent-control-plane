@@ -1,24 +1,26 @@
 # Combined engine
 
-Use `--engine combined` when both the custom Python policy and pinned Gitleaks
-detection are required. Either engine alone can miss patterns recognized by the
-other. Running one only after the other fails would leave successful scans with
-just one engine's coverage.
+Combined is the default engine for new installations. Python runs on every hook;
+Gitleaks runs on push by default, avoiding its full-index scan and Docker startup
+on frequent local commits. Either engine alone can miss patterns recognized by
+the other. Local history can therefore contain Python misses until push.
 
 ## Execution
 
-For each managed `pre-commit`, `commit-msg`, and `pre-push` hook:
+Default schedule:
 
 ```text
-Git hook
-  -> combined_gate.py
-     -> scan_sensitive.py   (Python policy)
-     -> gitleaks_gate.py    (pinned Gitleaks)
-  -> allow only if both return 0
+pre-commit / commit-msg -> Python -> require success
+pre-push -> Python -> Gitleaks -> require both successes
 ```
 
-The dispatcher runs Python first, then Gitleaks even after a finding or child
-failure. Invalid invocation or unavailable/oversized push input stops before
+`--commit-gitleaks on` at install/update enables Gitleaks on both commit hooks;
+`off` disables it there only, never on push. The boolean is baked into the
+digest-covered dispatcher, not read from target config/environment. Skipped
+checks report `SKIPPED engine:gitleaks policy:commit-disabled`, never `CHECKED`.
+
+When Gitleaks is scheduled, Python runs first, then Gitleaks even after a finding
+or child failure. Invalid invocation or unavailable/oversized push input stops before
 either child runs. It reads pre-push stdin once (64 KiB maximum, five-second read
 deadline), then sends the identical bytes to both children. It passes the commit
 message path as one argument without invoking a shell. Each child retains its
@@ -26,10 +28,12 @@ own scope, budgets, and 120-second deadline; the dispatcher additionally bounds
 each child to 125 seconds and kills its process group on that timeout. Combined
 checks can therefore take roughly twice as long as a single engine.
 
-Child stdout/stderr are discarded, including unexpected errors. Output contains
-only `CHECKED`, `REJECTED`, or `ERROR` and the fixed engine name. Per-rule and
+Child stdout/stderr are captured but not forwarded verbatim, including unexpected
+errors. Only strictly allowlisted publication reason codes/counters and image
+allowance counts are relayed, alongside `CHECKED`, `REJECTED`, or `ERROR` and the
+fixed engine name. Output over 64 KiB is incomplete. Per-rule and
 location diagnostics from the Python engine are not forwarded in this mode.
-Exit 0 requires both successes; exit 1 means findings with no incomplete check;
+Exit 0 requires all scheduled checks to succeed; exit 1 means findings with no incomplete check;
 exit 2 means at least one incomplete/error result, including unexpected child
 exit codes or a missing child. There is no fallback to a single engine.
 
@@ -49,8 +53,12 @@ with the same engine/runner arguments. An existing batch-enabled Gitleaks or com
 can supply its already verified runner when `--gitleaks-runner` is omitted.
 Pre-batch bundles require that argument on their first migration. The manager
 verifies the pinned digest again; it never downloads a binary or falls back.
-Ordinary updates preserve the selected engine. The initial default remains
-Python for compatibility; copying this skill does not change installed hooks.
+Ordinary updates preserve the selected engine and combined commit schedule.
+Legacy combined bundles retain their previous ON behavior; migrate explicitly
+with `--commit-gitleaks off`. New installations default to combined/Docker/OFF.
+Explicit Python-only and Gitleaks-only modes retain their original behavior and
+reject the combined-only schedule option. Missing prerequisites stop installation
+without fallback. Copying this skill does not change installed hooks.
 
 Prefer [Docker execution](docker.md) for Gitleaks. Python policy and Git object
 enumeration still run on the host. New Gitleaks/combined installations default to
@@ -58,16 +66,21 @@ Docker; existing installations preserve their runtime unless `--runtime` changes
 it explicitly. Docker failures never select native execution.
 
 Installation, verification, and rollback probe the exact bundle in temporary
-Git repositories. In combined mode the probes require both engines' success
-markers on safe operations and both engines' refusal markers for the shared
-secret/message/history canary and unscannable input. One working engine must
-not hide the other engine's failure to detect the probe.
+Git repositories. Probes require the configured commit schedule: Python results
+and explicit Gitleaks skip markers when OFF; both results when ON. Push always
+requires both engines' safe-operation and history-canary refusal markers. One
+working engine must not hide a required engine's failure to detect the probe.
 
 The bundle includes the dispatcher, both scanners, fixed Gitleaks configuration,
 verified binary, and three hooks. [Rollback and cleanup](installation.md) cover
 these recorded files just like single-engine bundles.
 
 ## Scope and residual risks
+
+Both adapters apply [static-image rules and publication budgets](images-and-publication.md).
+Validated raster contents are explicitly unscanned, not secret-free. SVG remains
+text-scanned. Image validation uses bounded host child processes; Gitleaks keeps
+its chosen runtime. Prepared decoder dependencies are required for activation.
 
 Both engines' restrictions apply. Gitleaks scans all regular index blobs at
 pre-commit and full reachable history at pre-push; Python retains its changed-blob

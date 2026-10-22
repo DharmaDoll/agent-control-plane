@@ -8,13 +8,20 @@ description: Inspect a local Git repository and install, verify, update, roll ba
 Set up repository-local secret checks using the bundled scanner and standard Git
 hooks. This directory is the canonical, self-contained implementation. Requires
 Linux (including WSL2), Git at `/usr/bin/git`, Python 3.10+, and POSIX shell.
+Static-image validation additionally requires the pinned decoder environment in
+[images-and-publication.md](references/images-and-publication.md). Read it before
+setup or diagnosing image/publication-budget refusals. OCR and PII detection are
+not provided; raster contents are explicitly unscanned, not certified clean.
 
 ## Start from the request and local evidence
 
 1. Establish the target repository root and requested operation. An inspection
    request authorizes inspection; an installation request covers normal setup
    and verification. Keep an existing installation's engine unless a switch is
-   requested. The initial default is the standard-library Python scanner.
+   requested. New installations default to combined/Docker: Python at commit
+   and commit-msg, both engines at push. Gitleaks on commit defaults OFF.
+   Python's secret patterns remain standard-library-only; managed installation also
+   probes the shared image decoder and therefore needs its prepared environment.
 2. Run the manager below with `inspect`. It reports clone/worktree limitations,
    existing hook conflicts, configuration scope, active version, and a suggested
    next step without modifying the repository.
@@ -61,8 +68,14 @@ Do not invent a downloader, install Docker/packages, use `sudo`, modify PATH, or
 substitute a binary found on PATH as an implicit setup step.
 
 When both scanners are requested, select `--engine combined` and read
-[combined.md](references/combined.md). Every hook runs Python then Gitleaks and
-requires both to succeed. Both engines' limitations apply; do not promise zero
+[combined.md](references/combined.md). Push runs Python then Gitleaks and
+requires both to succeed. Commit runs only Python by default; use
+`--commit-gitleaks on` at install/update to run both there too. Ordinary updates
+preserve the existing combined schedule (including legacy ON); changing it needs
+an explicit `--commit-gitleaks off/on`. The schedule is baked into the verified
+bundle, not read from repository config or environment variables. Explain that
+Python misses can enter local history before push detects them. Both engines'
+limitations apply; do not promise zero
 leaks or silently convert an existing installation.
 
 For an explanation of the Python engine's normal commit path, read
@@ -74,6 +87,10 @@ bundle integrity, and isolated hook behavior separately. The probe tests safe
 commit/push, staged secrets, message secrets, unscannable input, and a secret that
 was removed from the latest tree but remains in outgoing history. It changes
 neither the target's index/history nor any external remote.
+Current bundle probes also require a valid static PNG to pass. Use the prepared
+venv interpreter for installation/update; do not resolve its executable symlink
+to base Python or silently install missing codecs. Image workers run on the host
+with resource limits; only the Gitleaks detector uses the selected Docker runtime.
 
 ## Cleanup and failure handling
 

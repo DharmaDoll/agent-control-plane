@@ -3,16 +3,23 @@
 All examples run the script from a reviewed copy of this skill. Replace the
 repository argument with the exact worktree root. No credentials or network are
 needed for the Python engine or lifecycle probes.
+Prepare the [pinned image environment](images-and-publication.md#explicit-decoder-preparation)
+explicitly first. In the commands below, `python3` must denote its interpreter;
+the manager never installs dependencies. The PNG probe prevents activation from
+an interpreter that lacks the reviewed decoder capabilities.
 
 ## Inspect, install, verify
 
 ```sh
 python3 -B scripts/manage_hooks.py inspect --repo /path/to/repository
-python3 -B scripts/manage_hooks.py install --repo /path/to/repository
+python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
+  --gitleaks-runner /path/to/verified/gitleaks-runner
 python3 -B scripts/manage_hooks.py verify --repo /path/to/repository
 ```
 
-The initial default is the Python engine. `inspect` is read-only. Management
+The initial default is combined/Docker with commit Gitleaks OFF and push Gitleaks
+ON. Prepare the verified runner and Docker prerequisites first. Explicit
+`--engine python` selects Python-only mode. `inspect` is read-only. Management
 returns JSON: exit 0 means the requested operation completed; exit 2 means
 BLOCKED. An inspection PASS means diagnosis completed, not that checks are
 installed or that the recommendation has been executed.
@@ -39,6 +46,7 @@ assuming `.git` is a directory. It stores:
 ├── lock
 └── bundles/<content-digest>/
     ├── scripts/<selected-scanner>.py  # Combined: dispatcher and both scanners
+    ├── scripts/{publication_policy,image_worker}.py
     ├── hooks/{pre-commit,commit-msg,pre-push}
     └── bin/gitleaks-runner + gitleaks.toml    # Gitleaks or combined engine
 ```
@@ -98,6 +106,13 @@ bundle is idempotent; use `update` when the payload differs. An unchanged result
 checks file integrity but does not rerun the probes; use `verify` to rerun them.
 The previous active version is retained. `rollback` rechecks and probes that
 version before activating it and keeps the other version as the new previous.
+
+For combined mode, updates also preserve the commit Gitleaks schedule, including
+legacy bundles' ON behavior. Specify `--commit-gitleaks off` or `on` on an
+authorized update to change it. New combined installations default OFF. Push
+still requires both engines and has no Gitleaks-off option. `inspect` reports
+`commit_gitleaks` for an intact combined bundle; null means not applicable or
+unverified. Rollback restores the previous bundle's exact schedule.
 
 Preparation or probe failure leaves a recorded inactive candidate. Preview
 cleanup to remove that candidate if its files are still unchanged. A partially

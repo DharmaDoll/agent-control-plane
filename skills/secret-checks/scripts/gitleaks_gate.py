@@ -14,6 +14,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import publication_policy as policy
+
 ROOT = Path(__file__).resolve().parent
 BUNDLE = ROOT.parent
 RUNTIME = "native"
@@ -162,6 +165,7 @@ class Gate:
     def __init__(self, scanner):
         self.scanner = scanner
         self.seen = set()
+        self.images = policy.Images()
         if git("rev-parse", "--is-shallow-repository").strip() != b"false":
             raise Rejected("INCOMPLETE shallow repository")
         # This example requires a fully materialized object database.
@@ -174,14 +178,18 @@ class Gate:
         if Path(path.decode("utf-8")).suffix.lower() in ARCHIVES:
             raise Rejected("INCOMPLETE archive format")
 
-    def object(self, identity: str):
-        if identity in self.seen:
+    def object(self, identity: str, path: bytes | None = None):
+        # Validate every extension context, even when the same blob is reused.
+        name = path.decode('utf-8') if path is not None else None
+        image_kind = policy.image_format(name) if name is not None else None
+        key = (identity, image_kind)
+        if key in self.seen:
             return []
-        self.seen.add(identity)
+        self.seen.add(key)
         if len(self.seen) > MAX_OBJECTS:
             raise Rejected("INCOMPLETE object limit exceeded")
         size = int(git("cat-file", "-s", identity))
-        if size > MAX_BYTES:
+        if size > (policy.IMAGE_BYTES if image_kind else MAX_BYTES):
             raise Rejected("INCOMPLETE object size limit exceeded")
         kind = git("cat-file", "-t", identity).strip()
         if kind == b"tree":
@@ -198,11 +206,13 @@ class Gate:
                 if child_kind != expected_kind:
                     raise Rejected("ERROR inconsistent tree entry")
                 self.path(path)
-                children.append(oid(child))
+                children.append((oid(child), path if child_kind == b'blob' else None))
             return children
         if kind not in (b"blob", b"commit", b"tag"):
             raise Rejected("INCOMPLETE unsupported object kind")
         content = git("cat-file", kind.decode(), identity)
+        if kind == b'blob' and name is not None and self.images.validate(name, content):
+            return []
         self.scanner.scan(content, kind.decode() + ":" + identity)
         if kind == b"blob":
             return []
@@ -216,17 +226,18 @@ class Gate:
         if kind == b"commit":
             if len(values.get(b"tree", [])) != 1:
                 raise Rejected("ERROR invalid commit object")
-            return [oid(values[b"tree"][0])] + [oid(v) for v in values.get(b"parent", [])]
+            return [(oid(values[b"tree"][0]), None)] + [(oid(v), None) for v in values.get(b"parent", [])]
         if len(values.get(b"object", [])) != 1:
             raise Rejected("ERROR invalid tag object")
-        return [oid(values[b"object"][0])]
+        return [(oid(values[b"object"][0]), None)]
 
     def walk(self, tips):
         queue = list(tips)
         while queue:
-            queue.extend(self.object(queue.pop()))
+            queue.extend(self.object(*queue.pop()))
 
     def staged(self):
+        policy.check_staged()
         entries = git("ls-files", "--stage", "-z").split(b"\0")
         tips = []
         for entry in entries:
@@ -237,10 +248,11 @@ class Gate:
             if stage != b"0" or mode not in (b"100644", b"100755"):
                 raise Rejected("INCOMPLETE unmerged index, symlink or submodule")
             self.path(path)
-            tips.append(oid(identity))
+            tips.append((oid(identity), path))
         self.walk(tips)
 
     def updates(self, raw, receive):
+        policy.check_updates(raw, receive=receive)
         tips = []
         for line in raw.splitlines():
             fields = line.split()
@@ -259,7 +271,7 @@ class Gate:
                 raise Rejected("INCOMPLETE unsupported ref namespace")
             if set(new) == {ord("0")}:
                 continue
-            tips.append(new_id)
+            tips.append((new_id, None))
         # Scan full reachability, including existing history. No remote-tracking trust.
         self.walk(tips)
 
@@ -282,8 +294,12 @@ def main():
         else:
             raise Rejected("ERROR invalid invocation")
         gate.scanner.finish()
+        gate.images.report()
         print("CHECKED no findings within the configured scope")
         return 0
+    except policy.PolicyError as error:
+        print(f"ERROR policy {error}", file=sys.stderr)
+        return 2
     except Rejected as error:
         print(error.reason, file=sys.stderr)
         return error.code

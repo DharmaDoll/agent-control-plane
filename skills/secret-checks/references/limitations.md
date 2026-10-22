@@ -17,6 +17,10 @@ maintained scanner code, hooks, configuration, and executable tests.
 
 ## Python engine
 
+Both engines now apply [static-image rules and publication budgets](images-and-publication.md).
+Validated raster contents are not secret-scanned; SVG remains text-scanned.
+The text-only restrictions below apply to all other input.
+
 - Uses Python's standard library and the inherited example's 12 explicit secret
   patterns plus sensitive filename policy. It does not claim Gitleaks-equivalent
   coverage. Environment templates are name-allowed but still content-scanned.
@@ -40,6 +44,7 @@ maintained scanner code, hooks, configuration, and executable tests.
 - Limits: 5 MiB per input, 32 MiB scanned bytes, 1,000 scanned items or introduced
   commits, 64 KiB hook stdin, 30 seconds per Git subprocess, 120 seconds per hook.
   Captured Git metadata is checked after retrieval; this is not an OS memory sandbox.
+  Validated raster bytes use the separate image budget, not the text-byte budget.
 - Output includes rule IDs and hashed location IDs; matched values and raw paths
   are suppressed. Ref metadata findings also omit the ref value.
 
@@ -78,7 +83,11 @@ required; this control cannot establish the safety of those objects.
 
 ## Trust and residual risks
 
-The [combined engine](combined.md) runs both scanners and requires both successes.
+The [combined engine](combined.md) requires both scanners on push. By default it
+runs only Python on pre-commit and commit-msg; Gitleaks can be enabled there with
+`--commit-gitleaks on`. Python misses can enter local history before push detects
+them. Commit image/publication checks remain enabled. This schedule does not
+guarantee that local commits are free of Gitleaks-only findings.
 It inherits both sets of restrictions, including Python's refusal of tag pushes
 and Gitleaks' stricter content budget. It improves coverage but shares the same
 local trust boundary and cannot guarantee absence of secrets.

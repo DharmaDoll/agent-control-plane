@@ -1,16 +1,38 @@
 #!/usr/bin/env python3
-"""Run both bundled engines in order; only two successful checks permit Git."""
+"""Run Python on every hook and Gitleaks on push (optionally also on commit)."""
 from __future__ import annotations
 
 import os
 from pathlib import Path
 import signal
+import re
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent
 MAX_INPUT = 65536
 CHILD_TIMEOUT = 125
+COMMIT_GITLEAKS = False  # Fixed at bundle creation, never read from target config/env.
+
+
+def diagnostics(script, output):
+    """Relay only fixed policy messages, never arbitrary child diagnostics."""
+    engine = {'scan_sensitive.py': 'python', 'gitleaks_gate.py': 'gitleaks'}.get(script)
+    if engine is None:
+        return
+    codes = ('git-unavailable|git-incomplete|object-enumeration-limit|'
+             'object-metadata-incomplete|object-metadata-invalid|unsupported-index|'
+             'index-changed-during-check|invalid-index-object|hook-input-limit|'
+             'invalid-hook-input|invalid-object-id|unsupported-ref|invalid-object-enumeration|'
+             'image-bytes-limit|image-scan-budget|image-validation-unavailable-or-timeout|'
+             'image-decoder-unavailable|image-format-or-structure|image-not-static|'
+             'image-dimensions|svg-policy|image-validation-incomplete')
+    allowed = re.compile(rb'(?:ERROR policy (?:(?:' + codes.encode() + rb')|'
+                         rb'(?:commit|push)-(?:files|bytes) actual:[0-9]{1,12} limit:[0-9]{1,12})|'
+                         rb'POLICY images_allowed:[0-9]{1,4} image_content:unscanned)')
+    for line in output.splitlines():
+        if allowed.fullmatch(line):
+            print(f'DETAIL engine:{engine} ' + line.decode('ascii'), file=sys.stderr)
 
 
 def run_engine(script, args, data):
@@ -18,15 +40,18 @@ def run_engine(script, args, data):
     try:
         with subprocess.Popen(
             [sys.executable, "-I", "-B", str(ROOT / script), *args],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True,
         ) as child:
             try:
-                child.communicate(input=data, timeout=CHILD_TIMEOUT)
+                stdout, stderr = child.communicate(input=data, timeout=CHILD_TIMEOUT)
             except subprocess.TimeoutExpired:
                 os.killpg(child.pid, signal.SIGKILL)
                 child.communicate()
                 return 2
+            if len(stdout) + len(stderr) > 65536:
+                return 2
+            diagnostics(script, stdout + b'\n' + stderr)
             return child.returncode if child.returncode in (0, 1, 2) else 2
     except OSError:
         return 2
@@ -67,6 +92,9 @@ def main():
         ("python", "scan_sensitive.py", python_args),
         ("gitleaks", "gitleaks_gate.py", [mode, *args]),
     ):
+        if engine == "gitleaks" and mode != "pre-push" and not COMMIT_GITLEAKS:
+            print("SKIPPED engine:gitleaks policy:commit-disabled", file=sys.stderr)
+            continue
         result = run_engine(script, argv, data)
         results.append(result)
         status = ("CHECKED", "REJECTED", "ERROR")[result]

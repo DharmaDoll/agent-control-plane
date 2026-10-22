@@ -1,5 +1,11 @@
 # Python engine: commit hook execution flow
 
+The current implementation also applies shared [publication budgets and static
+image validation](images-and-publication.md). Commit budgets run before blob
+scanning; push budgets cover newly reachable blobs across all updates. Validated
+raster data follows the explicit image allowance instead of text scanning; SVG
+remains text-scanned. The text/NUL behavior below describes all other inputs.
+
 Git launches the installed hooks. The local Python scanner then checks its inputs
 and returns a status that allows Git to continue or causes it to stop. Codex and
 other LLMs do not participate in this runtime decision.
@@ -10,7 +16,8 @@ This walkthrough describes the Python engine shipped in this skill, based on
 [`source_payload()` in the manager](../scripts/manage_hooks.py). The Gitleaks
 engine has a [different inspection scope](gitleaks.md).
 The Python-only flow does not invoke Gitleaks. The [combined engine](combined.md)
-adds a dispatcher that runs both and requires both successes.
+adds a dispatcher that requires both on push. On commit it defaults to Python
+only; `--commit-gitleaks on` also enables Gitleaks on both commit hooks.
 
 All paths and bundle identifiers below are placeholders. This document is an
 execution explanation, not evidence that hooks are enabled in a particular

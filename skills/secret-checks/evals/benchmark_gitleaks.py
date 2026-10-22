@@ -25,7 +25,9 @@ def main():
     args = parser.parse_args()
     if any(n < 1 or n > 1000 for n in args.counts):
         parser.error("counts must be between 1 and 1000")
-    payload = manager.source_payload(args.engine, runtime=args.runtime, runner=args.runner)
+    # This measures Gitleaks, so explicitly opt in on commit for combined mode.
+    payload = manager.source_payload(args.engine, runtime=args.runtime, runner=args.runner,
+                                     commit_gitleaks=args.engine == 'combined')
     with tempfile.TemporaryDirectory(prefix="secret-checks-benchmark-") as raw:
         root = Path(raw)
         bundle = root / "bundle"
@@ -35,7 +37,9 @@ def main():
             target.write_bytes(data)
             target.chmod(mode)
         env = {"PATH": "/usr/bin:/bin", "HOME": raw, "GIT_CONFIG_NOSYSTEM": "1",
-               "GIT_CONFIG_GLOBAL": "/dev/null", "LANG": "C.UTF-8"}
+               "GIT_CONFIG_GLOBAL": "/dev/null", "LANG": "C.UTF-8",
+               "GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
+               "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid"}
         for count in args.counts:
             repo = root / f"work-{count}"
             subprocess.run(["/usr/bin/git", "init", "-q", str(repo)], env=env, check=True)
@@ -48,12 +52,21 @@ def main():
                 names.append(name)
                 total += len(data)
             subprocess.run(["/usr/bin/git", "add", "--", *names], cwd=repo, env=env, check=True)
+            # Benchmark full-index scanning of an existing repo, not a bulk
+            # addition which the publication policy now deliberately refuses.
+            tree = subprocess.check_output(['/usr/bin/git', 'write-tree'], cwd=repo, env=env).strip()
+            commit = subprocess.check_output(['/usr/bin/git', 'commit-tree', tree.decode(), '-m', 'fixture'],
+                                             cwd=repo, env=env).strip()
+            subprocess.run(['/usr/bin/git', 'update-ref', 'HEAD', commit.decode()], cwd=repo, env=env, check=True)
+            with (repo / names[0]).open('ab') as stream:
+                stream.write(b'ordinary update\n')
+            subprocess.run(['/usr/bin/git', 'add', '--', names[0]], cwd=repo, env=env, check=True)
             started = time.monotonic()
             result = subprocess.run([str(bundle / "hooks/pre-commit")], cwd=repo, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=245)
             elapsed = time.monotonic() - started
             print(json.dumps({"runtime": args.runtime, "engine": args.engine, "files": count,
-                              "content_bytes": total, "seconds": round(elapsed, 3),
+                              "changed_files": 1, "content_bytes": total + len(b'ordinary update\n'), "seconds": round(elapsed, 3),
                               "exit": result.returncode}), flush=True)
             if result.returncode != 0 or elapsed >= 120:
                 return 1

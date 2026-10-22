@@ -194,7 +194,8 @@ class GitModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_root:
             repository = self.repository(Path(raw_root))
             manager = Path(scanner.__file__).with_name("manage_hooks.py")
-            installed = subprocess.run([sys.executable, "-B", str(manager), "install", "--repo", str(repository)],
+            installed = subprocess.run([sys.executable, "-B", str(manager), "install", "--repo", str(repository),
+                                        "--engine", "python"],
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.assertEqual(installed.returncode, 0, installed.stdout)
 

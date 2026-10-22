@@ -1,5 +1,66 @@
 # Secret checks implementation record
 
+## Commit scheduling default
+
+Scope: update this distributable skill only; do not deploy to ModelForge or
+other installed copies. New installations default to combined/Docker, running
+Python at pre-commit/commit-msg and both engines at pre-push. Preserve image and
+publication policies. Explicit `--commit-gitleaks on` restores both commit
+detectors; there is no push opt-out. Pin the schedule in bundle code, never
+ambient target configuration. Updates preserve existing schedules (legacy ON);
+explicit OFF migrates them. Rollback restores the original bundle policy.
+
+Acceptance: default commits never launch Gitleaks, missing Gitleaks blocks push,
+ON runs both commit detectors, updates/rollback preserve the chosen schedule,
+invalid option combinations refuse, and probes validate the selected schedule.
+Regression first: the new default-skip test failed because the old dispatcher
+attempted the absent Gitleaks child (exit 2 instead of 0). Implementation and
+documentation are complete. The full integration run passed 110 of 111 tests;
+the remaining Python-only fixture still relied on the old default. After adding
+its explicit Python engine selection, all 14 Python scanner tests passed.
+Two additional default/legacy schedule tests passed separately. Docker scheduling,
+ON/OFF lifecycle, update preservation and rollback passed in the integration run.
+No runtime code changed after that run; no target deployment was performed.
+
+## Static images and publication budgets
+
+Accepted scope: allow validated static PNG, JPEG, WebP, BMP, GIF, TIFF, HEIC,
+and a restricted, non-rendered SVG subset. Raster contents and metadata are not
+secret-scanned; SVG remains text-scanned. No OCR, PII detection, per-image
+approvals, implicit dependency installation, or target-repository activation.
+
+Commit budget: 100 added/modified/renamed regular paths and 20 MiB of their full
+index contents. Push budget: 500 distinct newly reachable blobs and 50 MiB,
+unioned across updates; a new ref conservatively includes full reachability.
+Deletion-only updates add no content. Preserve existing secret-scan scopes and
+text limits. Images are limited to 5 MiB, 20 million pixels and one frame/page.
+
+| Slice | Dependencies | Acceptance | State |
+| --- | --- | --- | --- |
+| I1 | None | Reproduce valid-image rejection and bulk-upload missing guard | Complete |
+| I2 | I1 | Shared bounded decoder validation and restricted SVG checks | Complete |
+| I3 | I1 | Commit/push budgets include intermediate history and multiple refs | Complete |
+| I4 | I2, I3 | Both engines, managed bundles, diagnostics and rollback integrate | Complete |
+| I5 | I4 | Isolated regression/integration tests and updated skill/docs | Complete |
+
+Baseline: 92 tests ran, 35 artifact-dependent tests skipped, no failures
+(19.164 seconds). Final evidence is recorded in
+[validation.md](../skills/secret-checks/evals/validation.md). Existing
+README/runner reference edits and the untracked Gitleaks walkthrough are retained.
+
+Final verification: 108 tests passed with no skips in 587.968 seconds, including
+real combined/Docker hooks and legacy rollback. The 10/236/500-entry text
+benchmarks completed in 3.729/5.530/8.826 seconds (one changed path each).
+Skill structure, Python syntax, local documentation links and diff whitespace
+checks passed. No target installation or Git publication was performed.
+
+Image decoding adds a trusted, explicitly prepared Python environment. Use pinned
+Pillow/pillow-heif/defusedxml packages; fail closed when unavailable or different.
+Decoder subprocesses receive only bytes and a fixed format ID, suppress native
+diagnostics, disable core dumps and apply memory/CPU/wall-time limits. They are
+not a sandbox against native decoder compromise. Gitleaks retains Docker-first
+execution and its existing batch runner/protocol. No image rewriting is allowed.
+
 ## Accepted scope
 
 Make this repository the canonical home of the Python scanner and Gitleaks

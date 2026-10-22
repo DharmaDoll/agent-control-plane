@@ -8,6 +8,10 @@ repeats detector initialization; concatenating inputs can change allowlists,
 multiline matching and chunk boundaries. The runner initializes the detector once
 and scans independent inputs. Git enumeration and policy validation stay in Python.
 
+For a step-by-step explanation of the hook path, Go detector calls, input
+isolation, and completion checks, see [gitleaks-hook-flow.md](gitleaks-hook-flow.md).
+This reference remains the source for build pins and the protocol contract.
+
 One hook uses one runner process, or one hardened Docker container. Inputs travel
 through memory/stdin only: no host payload files, mounts, image layers, network,
 shell, or resident service. The runner uses the upstream stdin fragmenter with the

@@ -12,6 +12,12 @@ import subprocess
 import sys
 import signal
 
+# -I omits the script directory. Add only the reviewed bundle's module directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import publication_policy as policy
+
+IMAGES = policy.Images()
+
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
@@ -119,15 +125,23 @@ def blocked_path(path: str) -> bool:
     return name in BLOCKED_NAMES or PurePosixPath(name).suffix in BLOCKED_SUFFIXES
 
 
-def scan(label: str, content: bytes) -> list[tuple[str, str]]:
+def scan(label: str, content: bytes, *, file_content: bool = False) -> list[tuple[str, str]]:
     """Return rule names and locations without returning matched values."""
     global _total, _items
-    _total += len(content)
     _items += 1
-    if _total > MAX_TOTAL_BYTES or _items > MAX_ITEMS:
+    if _items > MAX_ITEMS:
         raise ScanError("scan budget exceeded")
     if len(content) > MAX_FILE_BYTES:
         raise ScanError("file exceeds scan limit")
+    if file_content and IMAGES.validate(label, content):
+        # Preserve name policy and secret-like name checks, not raster contents.
+        findings = [("sensitive-filename", label)] if blocked_path(label) else []
+        findings.extend((name, label) for name, pattern in COMPILED_RULES.items()
+                        if pattern.search(label.encode('utf-8', errors='surrogateescape')))
+        return findings
+    _total += len(content)
+    if _total > MAX_TOTAL_BYTES:
+        raise ScanError("scan budget exceeded")
     if b"\0" in content:
         raise ScanError("NUL-containing input cannot be scanned")
     if LFS_HEADER.search(content.decode("utf-8", errors="replace").strip()):
@@ -152,13 +166,14 @@ def decode_paths(raw: bytes) -> list[str]:
 
 def scan_staged() -> list[tuple[str, str]]:
     validate_repository()
+    policy.check_staged()
     validate_entries(git("ls-files", "--stage", "-z"), staged=True)
     findings: list[tuple[str, str]] = []
     paths = decode_paths(
         git("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR")
     )
     for path in paths:
-        findings.extend(scan(path, read_object(f":{path}")))
+        findings.extend(scan(path, read_object(f":{path}"), file_content=True))
     return findings
 
 
@@ -179,7 +194,7 @@ def scan_commit(commit: str) -> list[tuple[str, str]]:
     )
     # A merge can report the same path against several parents.
     for path in dict.fromkeys(paths):
-        for rule, _label in scan(path, read_object(f"{commit}:{path}")):
+        for rule, _label in scan(path, read_object(f"{commit}:{path}"), file_content=True):
             findings.append((rule, f"{short}:{path}"))
     return findings
 
@@ -190,6 +205,7 @@ def introduced_commits() -> list[str]:
     raw = sys.stdin.buffer.read(MAX_HOOK_BYTES + 1)
     if len(raw) > MAX_HOOK_BYTES:
         raise ScanError("hook input limit exceeded")
+    policy.check_updates(raw)
     for line in raw.decode("utf-8").splitlines():
         fields = line.split()
         if len(fields) != 4:
@@ -225,6 +241,7 @@ def scan_history() -> list[tuple[str, str]]:
 
 
 def report(findings: list[tuple[str, str]]) -> int:
+    IMAGES.report()
     for rule, label in findings:
         location = hashlib.sha256(label.encode("utf-8", errors="surrogateescape")).hexdigest()[:16]
         print(f"BLOCK {rule} location:{location}")
@@ -258,6 +275,9 @@ def main() -> int:
                 raise ScanError("--file requires --label")
             with args.file.open("rb") as stream:
                 findings = scan(args.label, stream.read(MAX_FILE_BYTES + 1))
+    except policy.PolicyError as error:
+        print(f"ERROR policy {error}", file=sys.stderr)
+        return 2
     except MetadataFinding:
         print("REJECTED secret-like ref metadata", file=sys.stderr)
         return 1

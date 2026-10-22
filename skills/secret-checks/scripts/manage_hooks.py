@@ -16,7 +16,9 @@ import shlex
 import stat
 import subprocess
 import sys
+import struct
 import tempfile
+import zlib
 
 SKILL = Path(__file__).resolve().parents[1]
 GIT = "/usr/bin/git"
@@ -25,6 +27,7 @@ DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 GITLEAKS_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
 RUNNER_SHA256 = "13483d25dc5c1f110b35e8f70aca21e0fa6aec1783d4fc406d2ea186d005982e"
 ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py", "scripts/combined_gate.py",
+                 "scripts/publication_policy.py", "scripts/image_worker.py",
                  "scripts/docker_gitleaks.py", "docker-image.json",
                  "gitleaks.toml", "bin/gitleaks", "bin/gitleaks-runner", *("hooks/" + h for h in HOOKS)}
 OVERRIDES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
@@ -254,6 +257,9 @@ class Repository:
                 "hook_config_scopes": scope_names,
                 "active": active, "engine": state["bundles"][active]["engine"] if active else None,
                 "runtime": bundle_runtime(state["bundles"][active]) if active else None,
+                "commit_gitleaks": (commit_gitleaks_enabled(self.bundles / active)
+                                    if active and state['bundles'][active]['engine'] == 'combined'
+                                    and self.bundle_clean(active, state['bundles'][active]) else None),
                 "docker_images": self.docker_images(state) if state else []}
 
 
@@ -261,13 +267,27 @@ def bundle_runtime(record):
     return "docker" if "docker-image.json" in record["files"] else "native"
 
 
-def source_payload(engine, binary=None, runtime="native", runner=None):
+def commit_gitleaks_enabled(bundle):
+    # Legacy combined bundles ran both engines at every hook. Inspect only the
+    # integrity-checked, managed source; never execute it or read target settings.
+    return b'COMMIT_GITLEAKS = False' not in (bundle / 'scripts/combined_gate.py').read_bytes()
+
+
+def source_payload(engine, binary=None, runtime="native", runner=None, commit_gitleaks=False):
+    if commit_gitleaks and engine != 'combined':
+        raise Blocked('COMMIT_GITLEAKS_REQUIRES_COMBINED')
     if runtime == "docker" and engine == "python":
         raise Blocked("DOCKER_REQUIRES_GITLEAKS_ENGINE")
     scanner = {"python": "scan_sensitive.py", "gitleaks": "gitleaks_gate.py",
                "combined": "combined_gate.py"}[engine]
     payload = {"scripts/" + scanner: ((SKILL / "scripts" / scanner).read_bytes(), 0o600)}
+    for helper in ('publication_policy.py', 'image_worker.py'):
+        payload['scripts/' + helper] = ((SKILL / 'scripts' / helper).read_bytes(), 0o600)
     if engine == "combined":
+        if commit_gitleaks:
+            content, mode = payload['scripts/combined_gate.py']
+            payload['scripts/combined_gate.py'] = (content.replace(
+                b'COMMIT_GITLEAKS = False', b'COMMIT_GITLEAKS = True'), mode)
         for child in ("scan_sensitive.py", "gitleaks_gate.py"):
             payload["scripts/" + child] = ((SKILL / "scripts" / child).read_bytes(), 0o600)
     for hook in HOOKS:
@@ -278,7 +298,8 @@ def source_payload(engine, binary=None, runtime="native", runner=None):
         # Python consumes only the message path; pre-push's remote args are not scanner options.
         if engine == "python":
             template = template.replace(' "$@"', "")
-        text = template.replace("@PYTHON@", shlex.quote(str(Path(sys.executable).resolve())))
+        # Preserve a selected venv: resolving its symlink loses its pinned packages.
+        text = template.replace("@PYTHON@", shlex.quote(str(Path(sys.executable).absolute())))
         text = text.replace("@SCANNER@", scanner).replace("@MODE@", mode)
         payload["hooks/" + hook] = (text.encode(), 0o700)
     if engine in ("gitleaks", "combined"):
@@ -330,12 +351,17 @@ def isolated_probe(hooks, engine=None):
         def call(*args, allowed=(0,), data=None, location=None):
             return run([GIT, *args], cwd=location or repo, data=data, env=env, allowed=allowed)
 
-        def check_combined(result, status):
+        def check_combined(result, status, push=False):
             if engine == "combined":
                 output = result.stdout + result.stderr
+                both = push or commit_gitleaks_enabled(hooks.parent)
                 if any((status + " engine:" + child).encode() not in output
-                       for child in ("python", "gitleaks")):
+                       for child in (("python", "gitleaks") if both else ("python",))):
                     raise Blocked("PROBE_COMBINED_ENGINE_RESULT_MISSING")
+                if not both and (b'SKIPPED engine:gitleaks policy:commit-disabled' not in output
+                                 or any(s + b' engine:gitleaks' in output
+                                        for s in (b'CHECKED', b'REJECTED', b'ERROR'))):
+                    raise Blocked('PROBE_COMMIT_SCHEDULE_MISMATCH')
 
         call("init", "-q", "-b", "main", str(repo), location=root)
         call("init", "-q", "--bare", str(remote), location=root)
@@ -345,10 +371,19 @@ def isolated_probe(hooks, engine=None):
         file = repo / "example.txt"
         file.write_bytes(b"safe content\n")
         call("add", "example.txt")
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+               + chunk(b'IDAT', zlib.compress(b'\0\0\0\0')) + chunk(b'IEND', b''))
+        # Older rollback bundles intentionally retain the former text-only policy.
+        if (hooks.parent / 'scripts/image_worker.py').is_file():
+            (repo / 'image.png').write_bytes(png)
+            call('add', 'image.png')
+        # Current bundles fail activation if the interpreter cannot validate images.
         check_combined(call("commit", "-q", "-m", "safe probe"), "CHECKED")
         baseline = call("rev-parse", "HEAD").stdout.strip()
         # Also exercise the explicit-SHA refspec used by controlled-github.
-        check_combined(call("push", "--quiet", str(remote), baseline.decode() + ":refs/heads/main"), "CHECKED")
+        check_combined(call("push", "--quiet", str(remote), baseline.decode() + ":refs/heads/main"), "CHECKED", push=True)
         canary = ("-----BEGIN " + "PRIVATE KEY-----\n" + "!invalid!" * 10 + "\n-----END " + "PRIVATE KEY-----\n").encode()
         file.write_bytes(canary)
         call("add", "example.txt")
@@ -382,7 +417,7 @@ def isolated_probe(hooks, engine=None):
         rejected = call("push", "--quiet", str(remote), "refs/heads/main:refs/heads/main", allowed=tuple(range(256)))
         if rejected.returncode == 0 or b"REJECTED" not in rejected.stdout + rejected.stderr:
             raise Blocked("PROBE_HISTORY_WAS_NOT_REJECTED")
-        check_combined(rejected, "REJECTED")
+        check_combined(rejected, "REJECTED", push=True)
         if call("rev-parse", "refs/heads/main", location=remote).stdout.strip() != baseline:
             raise Blocked("PROBE_REMOTE_CHANGED")
         for output in (rejected.stdout, rejected.stderr):
@@ -390,7 +425,7 @@ def isolated_probe(hooks, engine=None):
                 raise Blocked("PROBE_VALUE_WAS_DISCLOSED")
 
 
-def activate(repo, action, engine, binary, runtime=None, runner=None):
+def activate(repo, action, engine, binary, runtime=None, runner=None, commit_gitleaks=None):
     inspection = repo.inspect()
     state = repo.load()
     if state and state["active"]:
@@ -402,7 +437,13 @@ def activate(repo, action, engine, binary, runtime=None, runner=None):
         raise Blocked(reason)
     elif action == "update":
         raise Blocked("NOT_INSTALLED")
-    chosen = engine or (state["bundles"][state["active"]]["engine"] if state and state["active"] else "python")
+    chosen = engine or (state["bundles"][state["active"]]["engine"] if state and state["active"] else "combined")
+    if commit_gitleaks is not None and chosen != 'combined':
+        raise Blocked('COMMIT_GITLEAKS_REQUIRES_COMBINED')
+    selected_commit = commit_gitleaks == 'on'
+    if (commit_gitleaks is None and chosen == 'combined' and state and state['active']
+            and state['bundles'][state['active']]['engine'] == 'combined'):
+        selected_commit = commit_gitleaks_enabled(repo.bundles / state['active'])
     selected_runtime = runtime or (bundle_runtime(state["bundles"][state["active"]])
                                   if state and state["active"] else
                                   ("native" if chosen == "python" else "docker"))
@@ -413,7 +454,7 @@ def activate(repo, action, engine, binary, runtime=None, runner=None):
     if (state and state["active"] and chosen in ("gitleaks", "combined") and runner is None
             and "bin/gitleaks-runner" in state["bundles"][state["active"]]["files"]):
         runner = repo.bundles / state["active"] / "bin/gitleaks-runner"
-    payload = source_payload(chosen, binary, selected_runtime, runner)
+    payload = source_payload(chosen, binary, selected_runtime, runner, selected_commit)
     files = {name: {"sha256": hashlib.sha256(data).hexdigest(), "mode": mode} for name, (data, mode) in payload.items()}
     identity = hashlib.sha256(json.dumps({"engine": chosen, "files": files}, sort_keys=True).encode()).hexdigest()
     with repo.lock(create=True):
@@ -582,17 +623,19 @@ def main():
         parser.add_argument("--gitleaks", type=Path)
         parser.add_argument("--gitleaks-runner", type=Path)
         parser.add_argument("--runtime", choices=("native", "docker"))
+        parser.add_argument('--commit-gitleaks', choices=('on', 'off'),
+                            help='Combined engine only; new bundles default off, updates preserve the active policy')
         parser.add_argument("--apply", action="store_true", help="Delete cleanup candidates; otherwise preview only")
         args = parser.parse_args()
         if platform.system() != "Linux" or sys.version_info < (3, 10):
             raise Blocked("UNSUPPORTED_PLATFORM")
-        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks or args.runtime or args.gitleaks_runner)):
+        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks or args.runtime or args.gitleaks_runner or args.commit_gitleaks)):
             raise Blocked("INVALID_ARGUMENTS")
         repo = Repository(args.repo)
         if args.action == "inspect":
             result = repo.inspect()
         elif args.action in ("install", "update"):
-            result = activate(repo, args.action, args.engine, args.gitleaks, args.runtime, args.gitleaks_runner)
+            result = activate(repo, args.action, args.engine, args.gitleaks, args.runtime, args.gitleaks_runner, args.commit_gitleaks)
         else:
             result = managed_operation(repo, args.action, args.apply)
         print(json.dumps(result, sort_keys=True))

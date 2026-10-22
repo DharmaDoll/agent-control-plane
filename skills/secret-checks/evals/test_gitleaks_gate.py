@@ -193,7 +193,9 @@ class GitGateTests(unittest.TestCase):
     def test_symlink_rejected(self):
         (self.repo / 'link').symlink_to('/does-not-exist')
         self.git('add', 'link')
-        self.rejected(self.hook('pre-commit'), b'INCOMPLETE')
+        result = self.hook('pre-commit')
+        self.assertEqual(result.returncode, 2)
+        self.rejected(result, b'ERROR policy unsupported-index')
 
     def test_path_value_is_not_printed(self):
         name = CANARY.decode().replace('\n', '_')
@@ -209,7 +211,9 @@ class GitGateTests(unittest.TestCase):
         self.commit()
         identity = self.git('rev-parse', 'HEAD').stdout.strip().decode()
         self.git('update-index', '--add', '--cacheinfo', '160000,' + identity + ',module')
-        self.rejected(self.hook('pre-commit'), b'INCOMPLETE')
+        result = self.hook('pre-commit')
+        self.assertEqual(result.returncode, 2)
+        self.rejected(result, b'ERROR policy unsupported-index')
 
     def test_scanner_missing_or_modified(self):
         self.write('readme', b'ok\n')
