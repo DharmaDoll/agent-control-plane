@@ -27,7 +27,7 @@ DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 GITLEAKS_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
 RUNNER_SHA256 = "13483d25dc5c1f110b35e8f70aca21e0fa6aec1783d4fc406d2ea186d005982e"
 ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py", "scripts/combined_gate.py",
-                 "scripts/publication_policy.py", "scripts/image_worker.py",
+                 "scripts/publication_policy.py", "scripts/image_worker.py",  # Worker: legacy bundles only.
                  "scripts/docker_gitleaks.py", "docker-image.json",
                  "gitleaks.toml", "bin/gitleaks", "bin/gitleaks-runner", *("hooks/" + h for h in HOOKS)}
 OVERRIDES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
@@ -281,7 +281,7 @@ def source_payload(engine, binary=None, runtime="native", runner=None, commit_gi
     scanner = {"python": "scan_sensitive.py", "gitleaks": "gitleaks_gate.py",
                "combined": "combined_gate.py"}[engine]
     payload = {"scripts/" + scanner: ((SKILL / "scripts" / scanner).read_bytes(), 0o600)}
-    for helper in ('publication_policy.py', 'image_worker.py'):
+    for helper in ('publication_policy.py',):
         payload['scripts/' + helper] = ((SKILL / 'scripts' / helper).read_bytes(), 0o600)
     if engine == "combined":
         if commit_gitleaks:
@@ -376,10 +376,10 @@ def isolated_probe(hooks, engine=None):
         png = (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
                + chunk(b'IDAT', zlib.compress(b'\0\0\0\0')) + chunk(b'IEND', b''))
         # Older rollback bundles intentionally retain the former text-only policy.
-        if (hooks.parent / 'scripts/image_worker.py').is_file():
+        if (hooks.parent / 'scripts/publication_policy.py').is_file():
             (repo / 'image.png').write_bytes(png)
             call('add', 'image.png')
-        # Current bundles fail activation if the interpreter cannot validate images.
+        # Exercise the image allowance as well as ordinary text in current bundles.
         check_combined(call("commit", "-q", "-m", "safe probe"), "CHECKED")
         baseline = call("rev-parse", "HEAD").stdout.strip()
         # Also exercise the explicit-SHA refspec used by controlled-github.

@@ -49,9 +49,9 @@ and the daemon and reviewed build procedure remain trusted.
 ## Scan invocation and failure
 
 Git object enumeration and the custom Python scanner remain on the host.
-The shared [image validator](images-and-publication.md) also runs on the host in
-resource-limited child processes using the pinned decoder environment. The
-Gitleaks image does not contain those decoders or receive validated raster bytes.
+The shared [image allowance](images-and-publication.md) uses only extensions and
+byte budgets on the host. No decoder or worker runs. The Gitleaks image does not
+receive content exempted by the image-extension policy.
 Only the Gitleaks detector runs in Docker. All inputs for one hook are independently
 framed through stdin to one container, with no repository, home, credentials,
 or Docker-socket mounts. The detector is initialized once, not once per input.

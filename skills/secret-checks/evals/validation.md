@@ -350,6 +350,40 @@ introduced. Skill-creator guidance kept the setting in the existing manager and
 its reference instead of adding a new configuration framework. Source-only work:
 no deployment, commit, push or external issue mutation is performed.
 
+## Extension-based image allowance (2026-10-23)
+
+This change supersedes the decoder policy described in the historical static-image
+record above. No image packages or Python environment were installed. The initial
+decoder-subprocess regression failed against the old implementation, then passed
+after replacing decoding with extension/byte accounting.
+
+Using Python 3.10.4 with PIL, pillow_heif and defusedxml all absent, the focused
+image/publication suite ran 14 tests in 2.465 seconds: 13 passed and the real-runner
+test explicitly skipped because no runner was selected for that focused run.
+Coverage includes uppercase suffixes, empty/arbitrary/corrupt bytes, image byte
+and aggregate boundaries, publication limits, SVG secrets and image/text context.
+The full suite with verified runner/CLI artifacts and both Docker/legacy opt-ins
+passed all 112 tests in 395.057 seconds, with no skips. This includes real Docker
+image allowances, secret refusal, scheduling, installation/update/verification,
+rollback and cleanup in isolated repositories. The runner was reused read-only;
+no target hook configuration was changed. The diagnostic allowlist was narrowed
+during that run; its affected dispatcher tests were separately rerun afterward.
+After removing obsolete decoder diagnostic codes, all 8 dispatcher tests passed
+in 2.011 seconds. Skill structure, 18 Python AST parses, 85 local Markdown links
+and diff whitespace checks passed.
+
+The image worker and dependency list were removed from source (recoverable from
+Git). Legacy worker recognition remains in the manager. The historical migration
+fixture covers pre-batch bundles, not a dedicated decoder-era rollback test;
+do not infer the latter from general lifecycle evidence. External decoder venvs
+are deliberately retained for existing consumers. No ModelForge deployment,
+installed-skill update, commit, push or external environment cleanup was performed.
+
+Spec-driven development supplied the failing regression and recorded acceptance
+boundary. Skill-creator kept the revised procedure self-contained; CodeGuard
+informed explicit content-exemption risks, fixed diagnostics and preserved
+publication limits. Extension allowance is not format or PII validation.
+
 ## Limits of the evidence
 
 Skill frontmatter/reference checks do not establish agent behavior. Independent

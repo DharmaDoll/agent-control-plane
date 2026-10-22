@@ -1,9 +1,9 @@
 # Python engine: commit hook execution flow
 
-The current implementation also applies shared [publication budgets and static
-image validation](images-and-publication.md). Commit budgets run before blob
-scanning; push budgets cover newly reachable blobs across all updates. Validated
-raster data follows the explicit image allowance instead of text scanning; SVG
+The current implementation also applies shared [publication budgets and image
+allowances](images-and-publication.md). Commit budgets run before blob
+scanning; push budgets cover newly reachable blobs across all updates. Allowed
+image extensions exempt content without decoding or format checks; SVG
 remains text-scanned. The text/NUL behavior below describes all other inputs.
 
 Git launches the installed hooks. The local Python scanner then checks its inputs

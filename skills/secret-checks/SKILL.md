@@ -8,10 +8,11 @@ description: Inspect a local Git repository and install, verify, update, roll ba
 Set up repository-local secret checks using the bundled scanner and standard Git
 hooks. This directory is the canonical, self-contained implementation. Requires
 Linux (including WSL2), Git at `/usr/bin/git`, Python 3.10+, and POSIX shell.
-Static-image validation additionally requires the pinned decoder environment in
-[images-and-publication.md](references/images-and-publication.md). Read it before
-setup or diagnosing image/publication-budget refusals. OCR and PII detection are
-not provided; raster contents are explicitly unscanned, not certified clean.
+Image allowances use extensions and byte budgets only; no decoder, additional
+Python packages or dedicated environment is needed. Read
+[images-and-publication.md](references/images-and-publication.md) before setup
+or diagnosing budget refusals. Image contents are explicitly unscanned; this
+does not establish their format, integrity, static nature or absence of PII.
 
 ## Start from the request and local evidence
 
@@ -20,8 +21,7 @@ not provided; raster contents are explicitly unscanned, not certified clean.
    and verification. Keep an existing installation's engine unless a switch is
    requested. New installations default to combined/Docker: Python at commit
    and commit-msg, both engines at push. Gitleaks on commit defaults OFF.
-   Python's secret patterns remain standard-library-only; managed installation also
-   probes the shared image decoder and therefore needs its prepared environment.
+   Python policy and management use the standard library only.
 2. Run the manager below with `inspect`. It reports clone/worktree limitations,
    existing hook conflicts, configuration scope, active version, and a suggested
    next step without modifying the repository.
@@ -87,10 +87,11 @@ bundle integrity, and isolated hook behavior separately. The probe tests safe
 commit/push, staged secrets, message secrets, unscannable input, and a secret that
 was removed from the latest tree but remains in outgoing history. It changes
 neither the target's index/history nor any external remote.
-Current bundle probes also require a valid static PNG to pass. Use the prepared
-venv interpreter for installation/update; do not resolve its executable symlink
-to base Python or silently install missing codecs. Image workers run on the host
-with resource limits; only the Gitleaks detector uses the selected Docker runtime.
+Current bundle probes also require a PNG-named input to pass. Use an existing
+Python 3.10+ interpreter; only Gitleaks needs its separately prepared runner and
+selected Docker/native runtime. Earlier decoder-based rollback bundles still
+need their original interpreter and packages: preserve them until separately
+authorized cleanup after checking active/rollback consumers.
 
 ## Cleanup and failure handling
 

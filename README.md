@@ -18,7 +18,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
-`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。秘密情報のPython検査自体は標準ライブラリで動きますが、導入・更新には[固定版の画像検証環境](skills/secret-checks/references/images-and-publication.md)も必要です。Gitleaks版または両方を使うcombined版を選ぶ場合は、[固定版ランナーの準備](skills/secret-checks/references/runner.md)が必要です。
+`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。Python側の検査と導入管理は標準ライブラリだけで動き、画像用の外部ライブラリや専用Python環境は不要です。デフォルトのcombined版やGitleaks版では、[固定版ランナーの準備](skills/secret-checks/references/runner.md)が必要です。
 
 ### GitHubから導入する（Codex）
 
@@ -112,19 +112,19 @@ Python方式でGitがhookを起動し、indexとcommitメッセージの検査�
 
 Gitleaks方式の詳しい実行経路は、[Gitleaks hookとGoランナーの実行フロー](skills/secret-checks/references/gitleaks-hook-flow.md)にまとめています。GoへGitleaksをライブラリとして組み込む仕組み、入力ごとの分離、fragment処理、完了結果の照合、Dockerの実行・終了処理を説明しています。
 
-新規導入はcombined／Dockerがデフォルトです。`pre-commit`と`commit-msg`はPythonのみ、`pre-push`はPython → Gitleaksの両方を実行します。画像検証・大量投入制限は維持し、必須の検査で検出・検査不能・スキャナ欠落があれば拒否します。commit時にもGitleaksを使う場合は、導入・更新時に`--commit-gitleaks on`を指定してください。
+新規導入はcombined／Dockerがデフォルトです。`pre-commit`と`commit-msg`はPythonのみ、`pre-push`はPython → Gitleaksの両方を実行します。画像のバイト数制限・大量投入制限は維持し、必須の検査で検出・検査不能・スキャナ欠落があれば拒否します。commit時にもGitleaksを使う場合は、導入・更新時に`--commit-gitleaks on`を指定してください。
 
 既存環境の通常更新では現在の方式とcommit時の設定を保持します。旧combined環境を新方針へ切り替えるには、明示的に`--commit-gitleaks off`を指定します。Pythonが見逃した秘密情報はローカル履歴に入り得るため、公開前のpush検査とは保証が異なります。[combined方式の導入と制約](skills/secret-checks/references/combined.md)を確認してください。Skillをコピーしても既存hookは自動更新されません。
 
-## 静止画像の許可と大量公開の停止
+## 画像拡張子による許可と大量公開の停止
 
-PNG・JPEG・WebP・BMP・GIF・TIFF・HEICの静止画像と、制限したSVGを扱います。形式と拡張子の一致、デコード、画素数、フレーム／ページ数を検証し、画像は1件5 MiB・2,000万画素まで許可します。アニメーション・複数ページ・破損・未対応入力は拒否します。SVGは描画せず、外部参照・スクリプト・埋め込み画像等を拒否し、テキストの秘密情報検査も続けます。
+PNG・JPEG・WebP・BMP・GIF・TIFF・HEICの拡張子は、1件5 MiBまで内容未検査で許可します。形式の一致・破損・画素数・フレーム／ページ数は検証せず、静止画像だけを許可する保証はありません。SVGは通常のテキストとして秘密情報を検査しますが、XML解析・描画・無害化はしません。
 
-ラスター画像の内容・メタデータには秘密情報検査やOCRを行いません。結果には許可画像の件数と「内容は未検査」を表示します。画像の検証は固定版Pillow・pillow-heif・defusedxmlを入れた専用Python環境から、メモリ・CPU・時間を制限したホスト側子プロセスで実行します。Gitleaksは引き続きDockerを優先します。依存関係は自動インストールせず、既存hookも自動更新しません。
+許可した画像拡張子の内容・メタデータには秘密情報検査やOCRを行いません。結果には許可件数と「内容は未検査」を表示します。別形式のファイルを画像拡張子に変えた場合も検査対象外になるため、意図的な偽装を防ぐ制御ではありません。外部画像ライブラリと専用Python環境は不要で、Gitleaksは引き続きDockerを優先します。既存hookは自動更新しません。
 
 大量投入は、commitあたり追加・変更100ファイル／20 MiB、pushあたり新たに公開する500種類のblob／50 MiBを上限として停止します。commitはindexのファイル全体、pushは途中で削除された版を含む履歴を対象にします。既存のテキスト検査上限も維持します。新規branchのpushは到達可能な履歴全体を保守的に計上するため、大きな既存リポジトリでは停止する場合があります。
 
-これは大量投入による事故を抑える制御であり、少量の個人情報、画像内の機密情報、分割した流出やWeb/API経由の変更まで防ぐものではありません。[許可形式・依存環境・集計規則・制限事項](skills/secret-checks/references/images-and-publication.md)を確認してください。
+これは大量投入による事故を抑える制御であり、少量の個人情報、画像内の機密情報、分割した流出やWeb/API経由の変更まで防ぐものではありません。[許可拡張子・集計規則・制限事項](skills/secret-checks/references/images-and-publication.md)を確認してください。
 
 ## 認証と安全上の前提
 
@@ -146,7 +146,7 @@ python3 -B -m unittest discover -s skills/controlled-github/evals -p 'test_*.py'
 
 `spec-driven-development`はMarkdownによる手順です。[動作評価シナリオ](skills/spec-driven-development/evals/scenarios.md)で、軽量な変更、計画のみの依頼、テストの失敗、セッション再開などを評価します。文書の形式・参照チェックと、Agentが実際に手順を守るかの評価は区別します。
 
-`secret-checks`のPython版と導入管理のテストは、使い捨てのローカルGitリポジトリで実行します。以下の`python3`には、[固定版の画像デコーダーを準備した環境](skills/secret-checks/references/images-and-publication.md)のPythonを使ってください。画像対応と導入管理の検証にはその依存関係が必要です。
+`secret-checks`のPython版と導入管理のテストは、既存のPython 3.10以上と使い捨てのローカルGitリポジトリで実行します。画像用の追加パッケージは不要です。
 
 ```sh
 python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_scan_sensitive.py' -v

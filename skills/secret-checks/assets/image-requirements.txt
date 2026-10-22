@@ -1,4 +1,0 @@
-# Reviewed CPython 3.10, Linux x86_64 wheels. No source builds or automatic updates.
-Pillow==12.3.0 --hash=sha256:f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec
-pillow-heif==1.8.1 --hash=sha256:d7a06350c2f040f9bfbba63b068488f481087f0f1828e3af6bf20d7c67dd85d2
-defusedxml==0.7.1 --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61

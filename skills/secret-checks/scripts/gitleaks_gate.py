@@ -211,7 +211,7 @@ class Gate:
         if kind not in (b"blob", b"commit", b"tag"):
             raise Rejected("INCOMPLETE unsupported object kind")
         content = git("cat-file", kind.decode(), identity)
-        if kind == b'blob' and name is not None and self.images.validate(name, content):
+        if kind == b'blob' and name is not None and self.images.allow(name, content):
             return []
         self.scanner.scan(content, kind.decode() + ":" + identity)
         if kind == b"blob":

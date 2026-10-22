@@ -17,8 +17,8 @@ maintained scanner code, hooks, configuration, and executable tests.
 
 ## Python engine
 
-Both engines now apply [static-image rules and publication budgets](images-and-publication.md).
-Validated raster contents are not secret-scanned; SVG remains text-scanned.
+Both engines apply [image allowances and publication budgets](images-and-publication.md).
+Allowed image extensions exempt contents without format checks; SVG remains text-scanned.
 The text-only restrictions below apply to all other input.
 
 - Uses Python's standard library and the inherited example's 12 explicit secret
@@ -44,7 +44,7 @@ The text-only restrictions below apply to all other input.
 - Limits: 5 MiB per input, 32 MiB scanned bytes, 1,000 scanned items or introduced
   commits, 64 KiB hook stdin, 30 seconds per Git subprocess, 120 seconds per hook.
   Captured Git metadata is checked after retrieval; this is not an OS memory sandbox.
-  Validated raster bytes use the separate image budget, not the text-byte budget.
+  Exempted image bytes use the separate image budget, not the text-byte budget.
 - Output includes rule IDs and hashed location IDs; matched values and raw paths
   are suppressed. Ref metadata findings also omit the ref value.
 

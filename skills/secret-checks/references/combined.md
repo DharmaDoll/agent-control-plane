@@ -77,10 +77,10 @@ these recorded files just like single-engine bundles.
 
 ## Scope and residual risks
 
-Both adapters apply [static-image rules and publication budgets](images-and-publication.md).
-Validated raster contents are explicitly unscanned, not secret-free. SVG remains
-text-scanned. Image validation uses bounded host child processes; Gitleaks keeps
-its chosen runtime. Prepared decoder dependencies are required for activation.
+Both adapters apply [image allowances and publication budgets](images-and-publication.md).
+Allowed image extensions skip content detection, without format/decoder checks.
+SVG remains ordinary text-scanned. No image packages or worker processes are
+needed; Gitleaks keeps its chosen runtime.
 
 Both engines' restrictions apply. Gitleaks scans all regular index blobs at
 pre-commit and full reachable history at pre-push; Python retains its changed-blob

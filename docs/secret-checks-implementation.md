@@ -1,5 +1,33 @@
 # Secret checks implementation record
 
+## Extension-based image allowance (2026-10-23)
+
+This supersedes the decoder policy in the historical static-images section below.
+The purpose is to limit accidental bulk publication, not certify image validity.
+Allow PNG/JPEG/WebP/BMP/GIF/TIFF/HEIC by case-insensitive final extension; do not
+decode or check signatures, corruption, dimensions, frames or pages. SVG remains
+ordinary secret-scanned text, with no XML parsing or sanitization. Preserve file
+name checks, image byte budgets and commit/push publication budgets.
+
+Removed the image worker and pinned image dependencies. Existing Python 3.10+
+with its standard library suffices for the Python code; Gitleaks requirements
+and commit scheduling are unchanged. New bundles omit the worker, while manager
+recognition of legacy workers remains for rollback and cleanup. Do not remove
+external Python environments that older bundles may still need.
+
+Acceptance: arbitrary bytes under allowed extensions pass within byte budgets;
+SVG/text canaries and oversized/bulk inputs still refuse; no decoder process is
+started. The decoder-subprocess regression failed before implementation and
+passed afterward. Isolated fixtures cover the extension boundary, cache/budget
+boundaries, real combined/Docker hooks and existing lifecycle behavior. See
+[validation.md](../skills/secret-checks/evals/validation.md) for executed evidence.
+
+Residual risk: renaming arbitrary content to an allowed extension bypasses content
+scanning. Images and metadata may contain secrets or personal data. Animation and
+multipage content are allowed. Do not use this policy as an image-safety, PII or
+rendering sanitizer. No target deployment or external-environment cleanup is in
+scope for this change.
+
 ## Commit scheduling default
 
 Scope: update this distributable skill only; do not deploy to ModelForge or
@@ -22,7 +50,7 @@ Two additional default/legacy schedule tests passed separately. Docker schedulin
 ON/OFF lifecycle, update preservation and rollback passed in the integration run.
 No runtime code changed after that run; no target deployment was performed.
 
-## Static images and publication budgets
+## Static images and publication budgets (historical; decoder policy superseded)
 
 Accepted scope: allow validated static PNG, JPEG, WebP, BMP, GIF, TIFF, HEIC,
 and a restricted, non-rendered SVG subset. Raster contents and metadata are not

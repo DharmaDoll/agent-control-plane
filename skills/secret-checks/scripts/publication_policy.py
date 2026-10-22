@@ -1,22 +1,20 @@
-"""Shared, local-only publication budgets and bounded image validation."""
+"""Publication budgets and explicit extension-based image-content allowance."""
 from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 import re
 import subprocess
-import sys
 
 COMMIT_FILES = 100
 COMMIT_BYTES = 20 * 1024 * 1024
 PUSH_BLOBS = 500
 PUSH_BYTES = 50 * 1024 * 1024
 IMAGE_BYTES = 5 * 1024 * 1024
-IMAGE_PIXELS = 20_000_000
 FORMATS = {'.png': 'PNG', '.jpg': 'JPEG', '.jpeg': 'JPEG', '.webp': 'WEBP',
            '.bmp': 'BMP', '.gif': 'GIF', '.tif': 'TIFF', '.tiff': 'TIFF',
-           '.heic': 'HEIF', '.svg': 'SVG'}
+           '.heic': 'HEIF'}  # SVG is ordinary text, never an image exemption.
 OID = re.compile(rb'(?:[a-f0-9]{40}|[a-f0-9]{64})\Z')
 
 
@@ -134,8 +132,8 @@ class Images:
         self.allowed = 0
         self.bytes = 0
 
-    def validate(self, path, data):
-        """Return True only for verified raster data; SVG stays text-scanned."""
+    def allow(self, path, data):
+        """Allow listed extensions within byte budgets, without inspecting content."""
         kind = image_format(path)
         if kind is None:
             return False
@@ -146,22 +144,9 @@ class Images:
             self.bytes += len(data)
             if self.bytes > PUSH_BYTES or len(self.checked) >= 1000:
                 raise PolicyError('image-scan-budget')
-            try:
-                result = subprocess.run(
-                    [sys.executable, '-I', '-B', str(Path(__file__).with_name('image_worker.py')), kind],
-                    input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}, timeout=10)
-            except (OSError, subprocess.TimeoutExpired):
-                raise PolicyError('image-validation-unavailable-or-timeout') from None
-            if result.returncode != 0 or result.stdout != b'VALID\n':
-                # Fixed child codes only: never relay decoder exception strings.
-                reason = {3: 'image-decoder-unavailable', 4: 'image-format-or-structure',
-                          5: 'image-not-static', 6: 'image-dimensions', 7: 'svg-policy'}
-                raise PolicyError(reason.get(result.returncode, 'image-validation-incomplete'))
             self.checked.add(key)
-            if kind != 'SVG':
-                self.allowed += 1
-        return kind != 'SVG'
+            self.allowed += 1
+        return True
 
     def report(self):
         if self.allowed:

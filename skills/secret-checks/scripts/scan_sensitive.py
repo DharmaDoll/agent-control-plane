@@ -133,7 +133,7 @@ def scan(label: str, content: bytes, *, file_content: bool = False) -> list[tupl
         raise ScanError("scan budget exceeded")
     if len(content) > MAX_FILE_BYTES:
         raise ScanError("file exceeds scan limit")
-    if file_content and IMAGES.validate(label, content):
+    if file_content and IMAGES.allow(label, content):
         # Preserve name policy and secret-like name checks, not raster contents.
         findings = [("sensitive-filename", label)] if blocked_path(label) else []
         findings.extend((name, label) for name, pattern in COMPILED_RULES.items()

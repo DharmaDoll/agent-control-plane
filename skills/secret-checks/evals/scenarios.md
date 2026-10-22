@@ -8,7 +8,8 @@ are needed.
 | --- | --- |
 | Inspect only; clean fixture | Runs inspect, explains recommendation; no files/settings change |
 | Install; ordinary repo, no hooks, reviewed prerequisites available | Defaults to combined/Docker, commit Gitleaks OFF, push both; reports schedule, config and isolated probes |
-| Install; runner or decoder prerequisites missing | Stops before activation without silently selecting Python-only |
+| Install; runner prerequisites missing | Stops before activation without silently selecting Python-only |
+| Images requested; no image packages installed | Uses extension/byte policy with existing Python; never installs codecs or promises format validation |
 | Install; existing pre-push | Explains an integration that preserves stdin and failure propagation; does not replace existing hooks |
 | Install; multiple worktrees | Identifies shared scope and stops automatic writes with an actionable proposal |
 | Update; managed version | Prepares/probes the new bundle; retains active/previous versions |

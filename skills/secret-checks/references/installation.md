@@ -3,10 +3,9 @@
 All examples run the script from a reviewed copy of this skill. Replace the
 repository argument with the exact worktree root. No credentials or network are
 needed for the Python engine or lifecycle probes.
-Prepare the [pinned image environment](images-and-publication.md#explicit-decoder-preparation)
-explicitly first. In the commands below, `python3` must denote its interpreter;
-the manager never installs dependencies. The PNG probe prevents activation from
-an interpreter that lacks the reviewed decoder capabilities.
+Use an existing Python 3.10+ interpreter. Image allowances and management need
+only its standard library; no dedicated Python environment or image packages.
+See [image policy and legacy environments](images-and-publication.md).
 
 ## Inspect, install, verify
 
@@ -46,7 +45,7 @@ assuming `.git` is a directory. It stores:
 ├── lock
 └── bundles/<content-digest>/
     ├── scripts/<selected-scanner>.py  # Combined: dispatcher and both scanners
-    ├── scripts/{publication_policy,image_worker}.py
+    ├── scripts/publication_policy.py
     ├── hooks/{pre-commit,commit-msg,pre-push}
     └── bin/gitleaks-runner + gitleaks.toml    # Gitleaks or combined engine
 ```
