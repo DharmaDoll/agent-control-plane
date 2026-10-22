@@ -126,6 +126,137 @@ non-root/read-only execution, disabled networking, bounded resources, no host
 mounts, exact container cleanup, and suppressed child diagnostics. No new
 credentials, certificates, or authentication configuration were introduced.
 
+## Issue #7: batch runner (2026-10-21)
+
+Implementation working tree based on `638efd9154792017cc78863ca00fdafef4219632`.
+Linux x86_64 / WSL2, Python 3.10.4, Git 2.47.2, Docker 26.1.4.
+Final runner SHA-256:
+`22f8bf7fa0fc37e1bbbabea9ebb294b14ceefd73688cb1f5243dde5a4b57de79`.
+Built with Go 1.26.8, fixed Gitleaks 8.30.1, `gore2regex`, and the flags in
+[runner.md](../references/runner.md). A second build in an independent temporary
+build/cache directory produced the same digest. The offline helper refused to
+overwrite an existing output; its digest remained unchanged.
+
+### Automated evidence
+
+```sh
+SECRET_CHECKS_RUNNER=/path/to/verified/gitleaks-runner \
+SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks \
+SECRET_CHECKS_DOCKER=1 SECRET_CHECKS_LEGACY=1 \
+python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_*.py' -v
+```
+
+The final runtime passed **86 tests with no skips**, in 231.901 seconds:
+batch adapter 7, dispatcher 6, Docker 9 (including live lifecycle), Git/Gitleaks
+23, runner parity/protocol 4, historical migration 1, manager 22, Python scanner 14.
+Historical migration reads the immutable revision above from the local Git object
+database; its opt-in flag requires that revision and the official CLI to exist.
+It validates refused migration without a runner, explicit update, old-bundle
+rollback/verification, return to the new bundle, uninstall and cleanup.
+
+Go's three runner tests passed with
+`go test -mod=readonly -tags=gore2regex -count=1 ./...` using the pinned toolchain.
+The existing controlled-github suite passed all 30 tests. Skill structure,
+Python syntax and relative documentation links passed. No production hook,
+authentication, GitHub Issue/PR, commit, push or merge was changed.
+
+Tests compare the official CLI's per-input rule IDs with the batch runner,
+including private-key, GitHub PAT and AWS-shaped inert inputs, ignored allow
+comments, UTF-8, MIME-like text, empty inputs and large/chunk-boundary cases.
+Runtime-assembled canaries are never issued credentials. A new boundary test
+exposed an intermediate implementation's short header-only read: a multiline
+canary near 25 KB was missed. A contiguous per-input reader fixed this; the
+failure and its correction were observed before final validation. After the full
+run, the isolation fixture was strengthened to use a token whose joined halves
+are demonstrably detected; the affected Go and four runner tests were rerun.
+
+The 500-input runner checks detect canaries at positions 0, 250 and 499 without
+disclosing values. Fault injection verifies exactly one batch invocation, strict
+completion/count/byte validation, malformed reports, deadlines, Docker failure
+and exact-ID cleanup. These are not live OOM/daemon-outage simulations. Input
+truncation, unsupported text and size violations also exercise the real runner.
+
+### Performance
+
+Commands use `evals/benchmark_gitleaks.py --runner /path/to/verified/gitleaks-runner
+--runtime native|docker`, and `--runtime docker --engine combined --counts 236 500`.
+Each case uses a new isolated repository and unique benign blobs. Measurements
+cover the actual pre-commit hook including Git enumeration and, where applicable,
+Docker creation/removal; image preparation and fixture setup are outside timing.
+
+| Files | Content bytes | Native / Gitleaks | Docker / Gitleaks | Docker / combined |
+| --- | --- | --- | --- | --- |
+| 10 | 360 | 1.237 s | 1.153 s | NOT RUN |
+| 150 | 5,590 | 3.666 s | 1.897 s | NOT RUN |
+| 236 | 8,858 | 4.857 s | 2.329 s | 2.974 s |
+| 500 | 18,890 | 6.552 s | 3.527 s | 4.926 s |
+
+All measured runs returned exit 0 within the unchanged 120-second budget.
+Native launches one detector process; Docker creates one scanner container per
+hook, independently of input count (separately asserted by command-contract tests).
+The full combined Git lifecycle additionally exercises real commit/push commands.
+
+The pre-change measurements in [Issue #7](https://github.com/DharmaDoll/agent-control-plane/issues/7)
+recorded 10-file runs at 18.67 s native / 25.33 s Docker, and 150-file runs at
+120.06 s / 120.19 s with exit 2. Those fixtures contained 330 / 5,140 bytes and
+are not byte-identical to this benchmark. The separately reported combined/Docker
+236-entry timeout is adopter evidence, not a reproduction in that environment.
+These are single local runs, not latency SLAs, a native-vs-Docker ranking, or
+evidence for arbitrarily large repositories.
+
+### Retained resources and limits
+
+No labeled scan containers remained after the final tests. Two 15.3 MB test
+images remain under the existing shared-image retention policy:
+`sha256:aa8761b4329694ed59c478f15f57a1506480f23c1457fd23e808203c13a42812` and
+`sha256:b3ae88bbc63e3484178521a0e526d39ee5057beb2cd3bd058301d90c3f717038`.
+The pre-existing 22 MB CLI image also remains; no image/cache pruning was used.
+Build artifacts and Go cache are caller-owned; no binary is added to the skill.
+
+CodeGuard guidance informed bounded framing, fail-closed completion checks,
+secret-free fixtures, suppressed diagnostics, retained Docker isolation and
+SHA-256 artifact pinning. No credentials or certificates were introduced or
+authentication settings changed. The skill-creator workflow keeps acquisition
+and migration decisions explicit and the build/protocol detail in a reference.
+Issue #5/#6 Python fixes and Issue #8 agent-behavior evaluations are not included.
+
+## Publication follow-up: LFS false positives (2026-10-22)
+
+A manual pre-publication `scan_sensitive.py --staged` refused four source/test
+files because the old substring check classified quoted LFS version text as
+external-content pointers. No commit or push was made on that failed check.
+After explicit approval to fix it, a test-first regression reproduced that
+failure and showed that the two historical version URLs were not refused.
+
+Python, the Gitleaks adapter, and the Go runner now recognize standalone version
+header lines, including the legacy URLs, CRLF and surrounding whitespace.
+Truncated and malformed pointer-like metadata remains incomplete; quoted source
+text receives the normal secret checks. A source fixture with an added inert
+private-key canary is rejected, including through actual Git commit invocation.
+Fenced examples containing standalone headers remain conservatively refused,
+as documented in [limitations.md](../references/limitations.md#lfs-pointer-recognition).
+
+The updated runner SHA-256 is
+`13483d25dc5c1f110b35e8f70aca21e0fa6aec1783d4fc406d2ea186d005982e`.
+The pinned offline build helper reproduced that digest in an independent build
+directory. Runtime pins and acquisition documentation use this new artifact;
+the previous section's digest and performance measurements describe the earlier
+artifact, not a new benchmark of this one.
+
+Using the full command above with the updated runner, all **92 tests passed with
+no skips** in 245.705 seconds, including the real Docker lifecycle and legacy
+migration. The five dedicated LFS tests also passed separately; Go's four runner
+tests and controlled-github's 30 tests passed. All three skills passed structural
+validation; Python syntax, local documentation links, and diff whitespace passed.
+Before this fix, the pre-publication rerun had passed 86 tests after an initial
+sandbox Docker-socket denial; that initial failed run was not a passing result.
+
+CodeGuard informed retained refusal of external content, inert test data,
+non-sensitive output, and SHA-256 pin verification; no credentials, certificates,
+authentication settings, or target hook configuration were introduced. The
+skill-creator check covers packaging, not agent behavior. Other Python scanner
+issues and the outstanding agent-behavior evaluations remain outside this fix.
+
 ## Limits of the evidence
 
 Skill frontmatter/reference checks do not establish agent behavior. Independent

@@ -23,9 +23,10 @@ GIT = "/usr/bin/git"
 HOOKS = ("pre-commit", "commit-msg", "pre-push")
 DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 GITLEAKS_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
+RUNNER_SHA256 = "13483d25dc5c1f110b35e8f70aca21e0fa6aec1783d4fc406d2ea186d005982e"
 ALLOWED_FILES = {"scripts/scan_sensitive.py", "scripts/gitleaks_gate.py", "scripts/combined_gate.py",
                  "scripts/docker_gitleaks.py", "docker-image.json",
-                 "gitleaks.toml", "bin/gitleaks", *("hooks/" + h for h in HOOKS)}
+                 "gitleaks.toml", "bin/gitleaks", "bin/gitleaks-runner", *("hooks/" + h for h in HOOKS)}
 OVERRIDES = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
              "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
              "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -260,7 +261,7 @@ def bundle_runtime(record):
     return "docker" if "docker-image.json" in record["files"] else "native"
 
 
-def source_payload(engine, binary, runtime="native"):
+def source_payload(engine, binary=None, runtime="native", runner=None):
     if runtime == "docker" and engine == "python":
         raise Blocked("DOCKER_REQUIRES_GITLEAKS_ENGINE")
     scanner = {"python": "scan_sensitive.py", "gitleaks": "gitleaks_gate.py",
@@ -281,15 +282,25 @@ def source_payload(engine, binary, runtime="native"):
         text = text.replace("@SCANNER@", scanner).replace("@MODE@", mode)
         payload["hooks/" + hook] = (text.encode(), 0o700)
     if engine in ("gitleaks", "combined"):
-        if platform.machine() != "x86_64" or not binary:
-            raise Blocked("VERIFIED_LINUX_X64_GITLEAKS_REQUIRED")
-        path = Path(binary)
+        if platform.machine() != "x86_64":
+            raise Blocked("VERIFIED_LINUX_X64_RUNNER_REQUIRED")
+        # --gitleaks remains a distinct, optional comparison CLI input. Never
+        # interpret it as a runner or silently keep the old slow execution path.
+        if binary is not None:
+            path = Path(binary)
+            if not regular(path) or path.stat().st_size > 64 * 1024 * 1024:
+                raise Blocked("INVALID_GITLEAKS_BINARY")
+            if hashlib.sha256(path.read_bytes()).hexdigest() != GITLEAKS_SHA256:
+                raise Blocked("GITLEAKS_DIGEST_MISMATCH")
+        if runner is None:
+            raise Blocked("VERIFIED_GITLEAKS_RUNNER_REQUIRED")
+        path = Path(runner)
         if not regular(path) or path.stat().st_size > 64 * 1024 * 1024:
-            raise Blocked("INVALID_GITLEAKS_BINARY")
+            raise Blocked("INVALID_RUNNER_BINARY")
         data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != GITLEAKS_SHA256:
-            raise Blocked("GITLEAKS_DIGEST_MISMATCH")
-        payload["bin/gitleaks"] = (data, 0o700)
+        if hashlib.sha256(data).hexdigest() != RUNNER_SHA256:
+            raise Blocked("RUNNER_DIGEST_MISMATCH")
+        payload["bin/gitleaks-runner"] = (data, 0o700)
         payload["gitleaks.toml"] = ((SKILL / "assets/gitleaks.toml").read_bytes(), 0o600)
         if runtime == "docker":
             spec = importlib.util.spec_from_file_location("docker_gitleaks", SKILL / "scripts/docker_gitleaks.py")
@@ -379,7 +390,7 @@ def isolated_probe(hooks, engine=None):
                 raise Blocked("PROBE_VALUE_WAS_DISCLOSED")
 
 
-def activate(repo, action, engine, binary, runtime=None):
+def activate(repo, action, engine, binary, runtime=None, runner=None):
     inspection = repo.inspect()
     state = repo.load()
     if state and state["active"]:
@@ -397,10 +408,12 @@ def activate(repo, action, engine, binary, runtime=None):
                                   ("native" if chosen == "python" else "docker"))
     if binary is not None and chosen not in ("gitleaks", "combined"):
         raise Blocked("GITLEAKS_BINARY_REQUIRES_GITLEAKS_ENGINE")
-    if (state and state["active"] and chosen in ("gitleaks", "combined") and binary is None
-            and state["bundles"][state["active"]]["engine"] in ("gitleaks", "combined")):
-        binary = repo.bundles / state["active"] / "bin/gitleaks"
-    payload = source_payload(chosen, binary, selected_runtime)
+    if runner is not None and chosen not in ("gitleaks", "combined"):
+        raise Blocked("RUNNER_REQUIRES_GITLEAKS_ENGINE")
+    if (state and state["active"] and chosen in ("gitleaks", "combined") and runner is None
+            and "bin/gitleaks-runner" in state["bundles"][state["active"]]["files"]):
+        runner = repo.bundles / state["active"] / "bin/gitleaks-runner"
+    payload = source_payload(chosen, binary, selected_runtime, runner)
     files = {name: {"sha256": hashlib.sha256(data).hexdigest(), "mode": mode} for name, (data, mode) in payload.items()}
     identity = hashlib.sha256(json.dumps({"engine": chosen, "files": files}, sort_keys=True).encode()).hexdigest()
     with repo.lock(create=True):
@@ -567,18 +580,19 @@ def main():
         parser.add_argument("--repo", type=Path, required=True)
         parser.add_argument("--engine", choices=("python", "gitleaks", "combined"))
         parser.add_argument("--gitleaks", type=Path)
+        parser.add_argument("--gitleaks-runner", type=Path)
         parser.add_argument("--runtime", choices=("native", "docker"))
         parser.add_argument("--apply", action="store_true", help="Delete cleanup candidates; otherwise preview only")
         args = parser.parse_args()
         if platform.system() != "Linux" or sys.version_info < (3, 10):
             raise Blocked("UNSUPPORTED_PLATFORM")
-        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks or args.runtime)):
+        if (args.apply and args.action != "cleanup") or (args.action not in ("install", "update") and (args.engine or args.gitleaks or args.runtime or args.gitleaks_runner)):
             raise Blocked("INVALID_ARGUMENTS")
         repo = Repository(args.repo)
         if args.action == "inspect":
             result = repo.inspect()
         elif args.action in ("install", "update"):
-            result = activate(repo, args.action, args.engine, args.gitleaks, args.runtime)
+            result = activate(repo, args.action, args.engine, args.gitleaks, args.runtime, args.gitleaks_runner)
         else:
             result = managed_operation(repo, args.action, args.apply)
         print(json.dumps(result, sort_keys=True))

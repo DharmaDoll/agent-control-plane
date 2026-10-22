@@ -1,17 +1,18 @@
 # Gitleaks engine
 
-The migrated adapter supports Gitleaks 8.30.1 for Linux x86_64. Detection rules
-belong to the external Gitleaks product; the adapter, fixed configuration, hooks,
-and tests are maintained here. No third-party binary is committed to this skill.
+The adapter uses a small batch runner linked to Gitleaks 8.30.1 for Linux x86_64.
+Detection rules belong to Gitleaks; framing, completion validation, the adapter,
+fixed configuration, hooks, and tests are maintained here. No binary is committed
+to this skill. See [runner.md](runner.md) for the pinned build and trust boundary.
 
 This engine alone does not run the custom Python scanner. To require both,
-select the [combined engine](combined.md), which uses the same pinned binary.
+select the [combined engine](combined.md), which uses the same pinned runner.
 
 ## Deployment boundary and locations
 
 Skill installation copies instructions, scripts, and references; it does not
 install Gitleaks or activate hooks. Docker is preferred for new Gitleaks/combined
-installations. The manager copies the verified Linux x86_64 binary into the
+installations. The manager copies the verified Linux x86_64 runner into the
 bundle as build input and creates a local image; the scanner executes inside
 that image. Explicit native mode executes the bundle binary on the host.
 No daemon installation, global package, or PATH change is performed.
@@ -20,15 +21,15 @@ No daemon installation, global package, or PATH change is performed.
 | --- | --- |
 | Skill copy | Agent-selected directory, for example `<repo>/.agents/skills/secret-checks/`; not the runtime binary directory |
 | Acquisition input | Explicit approved archive/binary staging path supplied by the caller; outside manager ownership |
-| Verified binary / build input | `<git-dir>/secret-checks/bundles/<bundle-id>/bin/gitleaks`; managed copy with mode `0700`, executed on the host only in native mode |
-| Docker executable | `/gitleaks` inside the prepared image; image storage is managed by the local Docker daemon |
+| Verified runner / build input | `<git-dir>/secret-checks/bundles/<bundle-id>/bin/gitleaks-runner`; managed copy with mode `0700`, executed on the host only in native mode |
+| Docker executable | `/gitleaks-runner` inside the prepared image; image storage is managed by the local Docker daemon |
 | Docker image record | `<git-dir>/secret-checks/bundles/<bundle-id>/docker-image.json`; immutable local image ID |
 | Active hooks | `<git-dir>/secret-checks/bundles/<bundle-id>/hooks/`; selected by repository-local `core.hooksPath` |
 | State and retained versions | `<git-dir>/secret-checks/`; managed by lifecycle commands |
 
 Resolve `<git-dir>` with `git -C /path/to/repository rev-parse --absolute-git-dir`;
 do not assume it is always `<repo>/.git`. In an ordinary checkout the runtime
-binary is therefore `.git/secret-checks/bundles/<bundle-id>/bin/gitleaks`.
+binary is therefore `.git/secret-checks/bundles/<bundle-id>/bin/gitleaks-runner`.
 In Docker mode this host copy is retained for verified rebuilds, not executed
 by the scanner. Shared-worktree configurations still require separate review.
 
@@ -51,7 +52,27 @@ against host compromise. Native execution shares the hook's host account.
 
 ## Acquisition and selection
 
-Use an organization-approved acquisition process to obtain the official asset:
+Prepare the reviewed runner using [the offline build procedure](runner.md), or
+obtain the exact digest-matching artifact through an explicitly approved channel.
+There is no automatic download, package installation, or build in the manager.
+
+```sh
+python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
+  --engine gitleaks --runtime docker --gitleaks-runner /path/to/verified/gitleaks-runner
+```
+
+Use `update` to migrate an installed bundle. Pre-batch bundles contain only
+`bin/gitleaks` and cannot supply the runner: the first migration must explicitly
+provide `--gitleaks-runner`. Subsequent updates reuse the active verified runner.
+Runtime and engine are preserved unless explicitly changed. Rollback still
+executes the retained old bundle, including its original CLI and performance limits.
+The manager refuses missing/unverified runners before activation; it never falls
+back to the old per-input implementation. Native mode requires an explicit choice.
+
+### Official CLI for comparison
+
+The official CLI is retained as an independent test oracle, not the new runtime.
+Use an organization-approved acquisition process when obtaining this asset:
 
 - Release: <https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1>
 - Asset: `gitleaks_8.30.1_linux_x64.tar.gz`
@@ -67,17 +88,10 @@ If none is available, report the missing binary/procedure rather than improvisin
 a download/install script or silently changing the requested engine. A request
 to install the skill alone is not a request to acquire or execute this binary.
 
-```sh
-python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
-  --engine gitleaks --runtime docker --gitleaks /path/to/verified/gitleaks
-```
-
-To switch an installed Python bundle, use `update` with the same engine/binary
-arguments. A normal Gitleaks update can reuse its already verified installed
-binary. A different version or locally built binary is rejected, even if its
-version string looks right. Adapter calls also verify the binary digest.
-Use `--runtime native` only for an explicitly selected native installation.
-Existing installations preserve their runtime on update.
+The optional legacy `--gitleaks` argument validates this official CLI's digest,
+but does not copy it into a new bundle or satisfy the runner requirement.
+Tests select it with `SECRET_CHECKS_GITLEAKS`; runtime tests select the runner
+with `SECRET_CHECKS_RUNNER`. A version string is not integrity verification.
 
 ## Verification and removal
 
@@ -111,16 +125,20 @@ the adapter's policy. Built-in allowlists and Gitleaks' own detection limitation
 remain. Stdin scanning cannot evaluate original path-based rule conditions merely
 because path strings are also scanned.
 
-Limits inherited from the reviewed example: 2 MiB per object/message, 32 MiB total
-scanner input, 1,000 objects, 64 KiB hook stdin, 15 seconds per child process,
-10 seconds per scanner call, 120 seconds per hook. Non-UTF-8/control input, archives,
+Limits: 2 MiB per input, 32 MiB total scanner input, 1,000 objects, 64 KiB hook
+stdin, 64 MiB framed transport, and 4 MiB accepted report. Git subprocesses and
+Docker management calls retain their 15-second limit. Each input has a 10-second
+detector deadline; the batch uses only the remaining 120-second hook budget.
+Exact-container cleanup is attempted even after timeout, with its own bounded
+management call. Non-UTF-8/control input, archives,
 LFS pointers, symlinks, submodules, shallow/partial clones, missing objects and
 unsupported ref namespaces cause rejection as incomplete. Large existing histories
 may consistently exceed these limits; use an appropriate alternative design
 rather than silently narrowing scan scope or changing engines.
 
-The adapter captures/redacts scanner output and distinguishes findings, empty
-results and invalid reports/exit codes. Its reports omit raw paths, refs, messages
+The adapter captures scanner output, validates version, completion, input count,
+byte count and finding identifiers, and rejects report/exit disagreements.
+An empty or partial report is not a clean scan. Reports omit raw paths, refs, messages
 and matched values. Exit 0/1/2 means checked/finding/error respectively.
 
 ## Receiving-side reference

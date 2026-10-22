@@ -35,18 +35,19 @@ exit codes or a missing child. There is no fallback to a single engine.
 
 ## Setup and migration
 
-Prepare the [verified Gitleaks binary](gitleaks.md) first. From the skill directory:
+Prepare the [verified batch runner](runner.md) first. From the skill directory:
 
 ```sh
 python3 -B scripts/manage_hooks.py inspect --repo /path/to/repository
 python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
-  --engine combined --runtime docker --gitleaks /path/to/verified/gitleaks
+  --engine combined --runtime docker --gitleaks-runner /path/to/verified/gitleaks-runner
 python3 -B scripts/manage_hooks.py verify --repo /path/to/repository
 ```
 
 For an existing managed Python installation, use `update` instead of `install`
-with the same engine/binary arguments. An existing Gitleaks or combined bundle
-can supply its already verified binary when `--gitleaks` is omitted. The manager
+with the same engine/runner arguments. An existing batch-enabled Gitleaks or combined bundle
+can supply its already verified runner when `--gitleaks-runner` is omitted.
+Pre-batch bundles require that argument on their first migration. The manager
 verifies the pinned digest again; it never downloads a binary or falls back.
 Ordinary updates preserve the selected engine. The initial default remains
 Python for compatibility; copying this skill does not change installed hooks.

@@ -34,7 +34,7 @@ class DockerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             (root / "bin").mkdir()
-            (root / "bin/gitleaks").write_bytes(b"inert")
+            (root / "bin/gitleaks-runner").write_bytes(b"inert")
             with patch.object(gate, "BUNDLE", root), patch.object(gate, "RUNTIME", "docker"), \
                     patch.object(gate, "BINARY_SHA256", hashlib.sha256(b"inert").hexdigest()):
                 for value in (None, b"[]", b"{", b"x" * 4097):
@@ -103,8 +103,8 @@ class DockerContractTests(unittest.TestCase):
         self.assertIn("--network=none", args)
         self.assertIn("--pull=false", args)
         with tarfile.open(fileobj=io.BytesIO(command.call_args_list[0].kwargs["data"])) as archive:
-            self.assertEqual(archive.getnames(), ["Dockerfile", "gitleaks", "gitleaks.toml"])
-            self.assertEqual(archive.extractfile("gitleaks").read(), b"inert binary")
+            self.assertEqual(archive.getnames(), ["Dockerfile", "gitleaks-runner", "gitleaks.toml"])
+            self.assertEqual(archive.extractfile("gitleaks-runner").read(), b"inert binary")
 
     def test_image_tags_and_missing_images_refused(self):
         with patch.object(docker, "command", return_value=result(1)) as command:
@@ -121,9 +121,9 @@ class DockerLiveTests(unittest.TestCase):
         fixture = lifecycle.LifecycleTests()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
-        binary = os.environ["SECRET_CHECKS_GITLEAKS"]
+        binary = os.environ["SECRET_CHECKS_RUNNER"]
         _, installed = fixture.manage("install", "--engine", "combined",
-                                       "--gitleaks", binary)
+                                       "--gitleaks-runner", binary)
         self.assertEqual(installed["runtime"], "docker")
         _, inspection = fixture.manage("inspect")
         self.assertEqual(inspection["runtime"], "docker")

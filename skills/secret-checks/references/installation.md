@@ -40,7 +40,7 @@ assuming `.git` is a directory. It stores:
 └── bundles/<content-digest>/
     ├── scripts/<selected-scanner>.py  # Combined: dispatcher and both scanners
     ├── hooks/{pre-commit,commit-msg,pre-push}
-    └── bin/gitleaks + gitleaks.toml    # Gitleaks or combined engine
+    └── bin/gitleaks-runner + gitleaks.toml    # Gitleaks or combined engine
 ```
 
 The bundle ID covers the engine, generated hooks, scanner, configuration, binary

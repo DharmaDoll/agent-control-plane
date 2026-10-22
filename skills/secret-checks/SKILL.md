@@ -50,7 +50,12 @@ installations and pass `--runtime docker` explicitly. Read
 execution limits, and retained-image cleanup. Use `--runtime native` only when
 the user selects it; an unavailable Docker daemon is not permission to fall back.
 Preserve an existing runtime unless a change is requested. The manager never downloads
-software or substitutes a different engine after failure. If the pinned binary
+software or substitutes a different engine after failure. The batch runner is a
+separate, digest-pinned executable: supply `--gitleaks-runner`, not the official
+CLI's `--gitleaks` path. Existing pre-batch installations need an explicit runner
+input on their first update. Read [runner.md](references/runner.md) for approved
+offline builds and the batch protocol; do not build or acquire during a hook.
+If the pinned binary
 or an approved acquisition procedure is unavailable, report that specific blocker.
 Do not invent a downloader, install Docker/packages, use `sudo`, modify PATH, or
 substitute a binary found on PATH as an implicit setup step.

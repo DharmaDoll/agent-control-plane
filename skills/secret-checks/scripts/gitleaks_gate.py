@@ -9,19 +9,26 @@ import os
 from pathlib import Path
 import re
 import signal
+import struct
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parent
 BUNDLE = ROOT.parent
 RUNTIME = "native"
-BINARY_SHA256 = "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
+BINARY_SHA256 = "13483d25dc5c1f110b35e8f70aca21e0fa6aec1783d4fc406d2ea186d005982e"
 MAX_BYTES = 2 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
 MAX_OBJECTS = 1000
 MAX_INPUT = 65536
+MAX_WIRE = 64 * 1024 * 1024
 OID = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 ARCHIVES = {".zip", ".gz", ".bz2", ".xz", ".7z", ".rar", ".tar", ".jar", ".zst"}
+LFS_HEADER = re.compile(
+    r"(?m)^[\t ]*version[\t ]+(?:https://git-lfs\.github\.com/spec/v1|"
+    r"https://hawser\.github\.com/spec/v1|http://git-media\.io/v/2)[\t ]*\r?$"
+)
 
 
 class Rejected(Exception):
@@ -30,10 +37,10 @@ class Rejected(Exception):
         self.reason, self.code = reason, code
 
 
-def run(argv, *, data=None, cwd=None, env=None):
+def run(argv, *, data=None, cwd=None, env=None, timeout=15):
     try:
         return subprocess.run(argv, input=data, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, timeout=15, cwd=cwd, env=env)
+                              stderr=subprocess.PIPE, timeout=timeout, cwd=cwd, env=env)
     except (OSError, subprocess.TimeoutExpired):
         raise Rejected("ERROR process unavailable or timed out") from None
 
@@ -63,8 +70,9 @@ def bounded_read(stream, maximum=MAX_INPUT):
 
 
 class Scanner:
-    def __init__(self):
-        self.binary = BUNDLE / "bin/gitleaks"
+    def __init__(self, deadline=None):
+        self.deadline = deadline if deadline is not None else time.monotonic() + 120
+        self.binary = BUNDLE / "bin/gitleaks-runner"
         if hashlib.sha256(self.binary.read_bytes()).hexdigest() != BINARY_SHA256:
             raise Rejected("ERROR scanner digest mismatch")
         self.docker = None
@@ -81,6 +89,7 @@ class Scanner:
             except (OSError, ValueError, KeyError, TypeError, RuntimeError):
                 raise Rejected("ERROR Docker runtime unavailable or invalid") from None
         self.total = 0
+        self.inputs = []
 
     def scan(self, value: bytes, label: str):
         self.total += len(value)
@@ -92,39 +101,60 @@ class Scanner:
             raise Rejected("INCOMPLETE only UTF-8 text is supported") from None
         if any(ord(c) < 32 and c not in "\t\r\n" for c in text):
             raise Rejected("INCOMPLETE binary or control characters")
-        if b"version https://git-lfs.github.com/spec/v1" in value:
+        if LFS_HEADER.search(text.strip()):
             raise Rejected("INCOMPLETE LFS content requires separate inspection")
-        # Keep upstream MIME sniffing from silently skipping otherwise valid UTF-8 input.
-        # The original bytes remain intact after a fixed non-secret text header.
-        arguments = [
-            "stdin", "--config", "/gitleaks.toml" if self.docker else str(BUNDLE / "gitleaks.toml"),
-            "--gitleaks-ignore-path", "/dev/null", "--ignore-gitleaks-allow",
-            "--redact=100", "--no-banner", "--no-color", "--log-level=error",
-            "--max-decode-depth=0", "--max-archive-depth=0", "--timeout=10",
-            "--exit-code=10", "--report-format=json", "--report-path=-",
-        ]
-        data = b"source002 text input\n" + value
+        if self.total + 16 + (len(self.inputs) + 1) * 8 > MAX_WIRE:
+            raise Rejected("INCOMPLETE transport limit exceeded")
+        self.inputs.append(value)
+
+    def finish(self):
+        arguments = ["--config", "/gitleaks.toml" if self.docker else str(BUNDLE / "gitleaks.toml")]
+        data = bytearray(struct.pack(">4sIQ", b"SCB1", len(self.inputs), self.total))
+        for sequence, value in enumerate(self.inputs):
+            data.extend(struct.pack(">II", sequence, len(value)))
+            data.extend(value)
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise Rejected("INCOMPLETE hook deadline exceeded")
         if self.docker:
             try:
-                result = self.docker.scan(self.image, arguments, data)
+                result = self.docker.scan(self.image, arguments, data, deadline=self.deadline)
             except RuntimeError:
                 raise Rejected("ERROR Docker scan or cleanup incomplete") from None
         else:
             result = run([str(self.binary), *arguments], data=data, cwd=ROOT,
-                         env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"})
+                         env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "GOTRACEBACK": "none"},
+                         timeout=remaining)
         # Neither stdout nor stderr is forwarded: even paths and error text may contain secrets.
         try:
-            findings = json.loads(result.stdout)
-        except (ValueError, UnicodeError):
+            if len(result.stdout) > 4 * 1024 * 1024:
+                raise ValueError
+            report = json.loads(result.stdout)
+            if (not isinstance(report, dict)
+                    or set(report) != {"version", "complete", "processed", "bytes", "findings"}
+                    or type(report["version"]) is not int or report["version"] != 1
+                    or report["complete"] is not True
+                    or type(report["processed"]) is not int or report["processed"] != len(self.inputs)
+                    or type(report["bytes"]) is not int or report["bytes"] != self.total
+                    or not isinstance(report["findings"], list)):
+                raise ValueError
+            findings = report["findings"]
+            seen = set()
+            for finding in findings:
+                if (not isinstance(finding, dict) or set(finding) != {"input", "rules"}
+                        or type(finding["input"]) is not int
+                        or not 0 <= finding["input"] < len(self.inputs)
+                        or finding["input"] in seen or not isinstance(finding["rules"], list)
+                        or not finding["rules"] or any(not isinstance(rule, str)
+                            or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", rule) for rule in finding["rules"])):
+                    raise ValueError
+                seen.add(finding["input"])
+        except (ValueError, UnicodeError, KeyError, TypeError):
             raise Rejected("ERROR invalid scanner report") from None
-        if not isinstance(findings, list):
-            raise Rejected("ERROR invalid scanner report")
         if result.returncode == 0 and not findings:
             return
-        if result.returncode == 10 and findings and all(
-            isinstance(f, dict) and isinstance(f.get("RuleID"), str) for f in findings
-        ):
-            raise Rejected("REJECTED finding at " + label, 1)
+        if result.returncode == 10 and findings:
+            raise Rejected("REJECTED finding in batch", 1)
         raise Rejected("ERROR scanner status/report disagreement or failure")
 
 
@@ -241,7 +271,7 @@ def main():
     signal.alarm(120)
     try:
         mode, *args = sys.argv[1:]
-        gate = Gate(Scanner())
+        gate = Gate(Scanner(time.monotonic() + 120))
         if mode == "pre-commit" and not args:
             gate.staged()
         elif mode == "commit-msg" and len(args) == 1:
@@ -251,6 +281,7 @@ def main():
             gate.updates(bounded_read(sys.stdin.buffer), mode == "pre-receive")
         else:
             raise Rejected("ERROR invalid invocation")
+        gate.scanner.finish()
         print("CHECKED no findings within the configured scope")
         return 0
     except Rejected as error:

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 import sys
+import time
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +27,10 @@ class GitGateTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.bundle = self.root / 'trusted bundle'
-        binary = os.environ.get('SECRET_CHECKS_GITLEAKS')
-        if not binary:
-            self.skipTest('Set SECRET_CHECKS_GITLEAKS to the verified Linux x64 8.30.1 binary')
-        for name, (data, mode) in manage_hooks.source_payload('gitleaks', binary).items():
+        runner = os.environ.get('SECRET_CHECKS_RUNNER')
+        if not runner:
+            self.skipTest('Set SECRET_CHECKS_RUNNER to the verified batch runner')
+        for name, (data, mode) in manage_hooks.source_payload('gitleaks', runner=runner).items():
             target = self.bundle / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
@@ -88,6 +89,13 @@ class GitGateTests(unittest.TestCase):
     def test_staged_secret_even_when_worktree_is_clean(self):
         self.write('config.txt', CANARY)
         (self.repo / 'config.txt').write_bytes(b'clean now\n')
+        self.rejected(self.commit(ok=False))
+
+    def test_lfs_header_in_source_does_not_block_or_exempt_commit(self):
+        source = b'header = "version https://git-lfs.github.com/spec/v1"\n'
+        self.write('example.py', source)
+        self.commit()
+        self.write('example.py', source + CANARY)
         self.rejected(self.commit(ok=False))
 
     def test_unstaged_secret_does_not_change_index_scan(self):
@@ -205,7 +213,7 @@ class GitGateTests(unittest.TestCase):
 
     def test_scanner_missing_or_modified(self):
         self.write('readme', b'ok\n')
-        binary = self.bundle / 'bin/gitleaks'
+        binary = self.bundle / 'bin/gitleaks-runner'
         binary.rename(self.bundle / 'bin/saved')
         self.rejected(self.hook('pre-commit'), b'ERROR')
         binary.write_bytes(b'not the reviewed binary')
@@ -246,6 +254,8 @@ class ScannerFailureTests(unittest.TestCase):
         scanner.binary = Path('/unused')
         scanner.docker = None
         scanner.total = 0
+        scanner.inputs = []
+        scanner.deadline = time.monotonic() + 120
         return scanner
 
     def test_unknown_exit_empty_and_invalid_reports(self):
@@ -255,14 +265,18 @@ class ScannerFailureTests(unittest.TestCase):
                 result = subprocess.CompletedProcess([], status, output, CANARY)
                 with patch.object(gate, 'run', return_value=result):
                     with self.assertRaises(gate.Rejected) as caught:
-                        self.scanner().scan(b'normal', 'test')
+                        scanner = self.scanner()
+                        scanner.scan(b'normal', 'test')
+                        scanner.finish()
                     self.assertEqual(caught.exception.code, 2)
                     self.assertNotIn(CANARY.decode(), caught.exception.reason)
 
     def test_timeout_is_not_clean(self):
         with patch.object(gate.subprocess, 'run', side_effect=subprocess.TimeoutExpired('scanner', 15)):
             with self.assertRaises(gate.Rejected) as caught:
-                self.scanner().scan(b'normal', 'test')
+                scanner = self.scanner()
+                scanner.scan(b'normal', 'test')
+                scanner.finish()
             self.assertEqual(caught.exception.code, 2)
 
 

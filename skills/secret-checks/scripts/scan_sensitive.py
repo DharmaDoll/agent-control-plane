@@ -21,6 +21,12 @@ OID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 _total = 0
 _items = 0
 ZERO_OID = re.compile(r"^0+$")
+# Refuse standalone pointer metadata, including legacy headers and truncated
+# pointers. A quoted occurrence in source is ordinary text, not an exemption.
+LFS_HEADER = re.compile(
+    r"(?m)^[\t ]*version[\t ]+(?:https://git-lfs\.github\.com/spec/v1|"
+    r"https://hawser\.github\.com/spec/v1|http://git-media\.io/v/2)[\t ]*\r?$"
+)
 
 BLOCKED_NAMES = {
     ".ds_store",
@@ -124,7 +130,7 @@ def scan(label: str, content: bytes) -> list[tuple[str, str]]:
         raise ScanError("file exceeds scan limit")
     if b"\0" in content:
         raise ScanError("NUL-containing input cannot be scanned")
-    if b"version https://git-lfs.github.com/spec/v1" in content:
+    if LFS_HEADER.search(content.decode("utf-8", errors="replace").strip()):
         raise ScanError("LFS content requires separate inspection")
 
     findings: list[tuple[str, str]] = []

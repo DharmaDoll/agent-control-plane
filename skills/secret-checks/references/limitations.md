@@ -58,6 +58,24 @@ Container startup counts toward hook deadlines. The Docker daemon and prepared
 image are additional trusted components; Docker failure never selects native
 execution. Shared images remain after bundle cleanup.
 
+## LFS pointer recognition
+
+All three validation layers (Python scanner, Gitleaks adapter, and batch runner)
+refuse a standalone `version` line naming the current Git LFS v1 URL or either
+legacy URL (`hawser.github.com` and `git-media.io`). This follows the version
+identifiers in the [Git LFS pointer implementation](https://github.com/git-lfs/git-lfs/blob/main/lfs/pointer.go)
+and the [pointer specification](https://github.com/git-lfs/git-lfs/blob/main/docs/spec.md).
+Leading/trailing whitespace, CRLF, missing fields, and malformed remaining fields
+do not turn recognized pointer-like metadata into a clean scan. No LFS content is
+downloaded. Empty inputs remain ordinary empty content.
+
+A version string embedded in a quoted source literal or inline prose is not a
+pointer. That content continues through all normal secret checks; it is not an
+allowlist. This is conservative header recognition, not a full pointer parser:
+standalone version lines in fenced documentation examples also refuse the scan.
+Use a separately reviewed design when inspecting actual external LFS objects is
+required; this control cannot establish the safety of those objects.
+
 ## Trust and residual risks
 
 The [combined engine](combined.md) runs both scanners and requires both successes.

@@ -8,7 +8,7 @@ different code and unnecessary access.
 ## Prerequisites and setup
 
 Requires the already-installed `/usr/bin/docker`, a working local Linux x86_64
-daemon at `unix:///var/run/docker.sock`, and the [verified fixed binary](gitleaks.md).
+daemon at `unix:///var/run/docker.sock`, and the [verified batch runner](runner.md).
 The skill does not install a daemon, modify group membership, use sudo, change
 Docker contexts, or download software. Report missing prerequisites instead of
 falling back to native execution. Host permission prompts remain applicable.
@@ -16,13 +16,14 @@ falling back to native execution. Host permission prompts remain applicable.
 ```sh
 python3 -B scripts/manage_hooks.py inspect --repo /path/to/repository
 python3 -B scripts/manage_hooks.py install --repo /path/to/repository \
-  --engine combined --runtime docker --gitleaks /path/to/verified/gitleaks
+  --engine combined --runtime docker --gitleaks-runner /path/to/verified/gitleaks-runner
 python3 -B scripts/manage_hooks.py verify --repo /path/to/repository
 ```
 
 Use `update --runtime docker` to migrate an existing managed Gitleaks/combined
-installation, reusing its verified binary. For a Python-only installation, also
-select `--engine combined` and supply `--gitleaks`. Ordinary updates retain the
+installation, reusing its verified runner. Pre-batch installations must supply
+`--gitleaks-runner` on the first update; their old CLI is not interchangeable.
+For a Python-only installation, also select `--engine combined`. Ordinary updates retain the
 existing runtime. Native mode requires an explicit user choice and
 `--runtime native`. The Python-only engine does not support Docker mode.
 
@@ -37,8 +38,8 @@ not part of the build context.
 
 The resulting immutable `sha256:` image ID is recorded in the versioned bundle's
 `docker-image.json`. Docker manages image/layer storage; the executable inside
-the container is `/gitleaks`. The verified host copy remains under the bundle's
-`bin/gitleaks` for integrity checking and future rebuilds; Docker mode does not
+the container is `/gitleaks-runner`. The verified host copy remains under the bundle's
+`bin/gitleaks-runner` for integrity checking and future rebuilds; Docker mode does not
 execute that host copy. Rebuilding may reuse Docker's cache.
 
 The image ID fixes the locally built image, not an independently signed upstream
@@ -48,8 +49,9 @@ and the daemon and reviewed build procedure remain trusted.
 ## Scan invocation and failure
 
 Git object enumeration and the custom Python scanner remain on the host.
-Only the Gitleaks detector runs in Docker. Every input is sent through stdin to
-a new container, with no repository, home, credentials, or Docker-socket mounts.
+Only the Gitleaks detector runs in Docker. All inputs for one hook are independently
+framed through stdin to one container, with no repository, home, credentials,
+or Docker-socket mounts. The detector is initialized once, not once per input.
 The fixed policy includes:
 
 - No network, no implicit image pulls, no ports, and no container log driver.
@@ -70,8 +72,9 @@ or a daemon outage can prevent cleanup. A timed-out create/build may have taken
 effect even without returning an ID; report uncertain completion rather than
 blindly retrying or deleting by an assumed name.
 
-Per-input container startup is slower than native execution and counts toward
-the existing hook deadlines. The existing size/scope limits still apply; this
+Container startup and execution count toward the existing 120-second hook
+deadline; attach uses the remaining budget, not a per-input 15-second timeout.
+The existing size/scope limits still apply; this
 runtime is unsuitable for workloads that cannot complete within those limits.
 Remote Docker daemons, alternate sockets, unsupported architectures, and arbitrary
 third-party images are outside this implementation.

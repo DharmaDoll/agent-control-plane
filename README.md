@@ -18,7 +18,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
-`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。標準のPython版に追加packageは不要です。Gitleaks版または両方を使うcombined版を選ぶ場合は、[固定版binaryの準備](skills/secret-checks/references/gitleaks.md)が必要です。
+`secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。標準のPython版に追加packageは不要です。Gitleaks版または両方を使うcombined版を選ぶ場合は、[固定版ランナーの準備](skills/secret-checks/references/runner.md)が必要です。
 
 ### GitHubから導入する（Codex）
 
@@ -86,23 +86,25 @@ Skillのコピーだけではhookは有効になりません。導入時に環�
 
 ### Gitleaksはどこに配置・実行されるか
 
-新規のGitleaks／combined方式では**Dockerを優先**します。上記の`skill-installer`による取得だけではGitleaksやDockerは入りません。hook導入時に、用意した固定版バイナリを検証し、それと固定設定だけを含む最小イメージをローカルで作ります。Dockerが使えない場合は停止し、ネイティブ方式へ黙って切り替えません。
+新規のGitleaks／combined方式では**Dockerを優先**します。上記の`skill-installer`による取得だけではランナーやDockerは入りません。hook導入時に、固定版Gitleaksの検出処理を組み込んだ専用ランナーを検証し、それと固定設定だけを含む最小イメージをローカルで作ります。Dockerが使えない場合は停止し、ネイティブ方式へ黙って切り替えません。
 
 | 段階 | 配置先・動作 |
 | --- | --- |
 | Skillの取得 | `<repo>/.agents/skills/secret-checks/`に手順・script等を配置。hookは未有効 |
 | バイナリの準備 | 明示した取得・一時配置先に用意。管理scriptはダウンロードしない |
 | hookの導入 | 通常は`<repo>/.git/secret-checks/bundles/<bundle-id>/`にhook・検証済みバイナリ・image IDを保存 |
-| イメージの配置 | ローカルDocker daemonがストレージを管理。コンテナ内の実行ファイルは`/gitleaks` |
-| commit／push | ホスト側で検査対象を取得し、stdinで一時コンテナへ渡す。検査後にコンテナを削除 |
+| イメージの配置 | ローカルDocker daemonがストレージを管理。コンテナ内の実行ファイルは`/gitleaks-runner` |
+| commit／push | ホスト側で検査対象を取得し、入力の区切りを保ってstdinで渡す。1 hookにつき1コンテナで検査し、終了後に削除 |
 
-コンテナにはリポジトリやDockerソケットをマウントせず、ネットワークなし・非root・read-onlyで実行します。ホスト側の`bin/gitleaks`は再構築用に保持しますが、Docker方式では直接実行しません。Docker daemonとPython・Gitはホスト側に必要です。daemonのインストール、権限・PATHの変更は自動では行いません。
+コンテナにはリポジトリやDockerソケットをマウントせず、ネットワークなし・非root・read-onlyで実行します。検査内容を一時ファイルやイメージへ保存しません。ホスト側の`bin/gitleaks-runner`は再構築用に保持しますが、Docker方式では直接実行しません。Docker daemonとPython・Gitはホスト側に必要です。daemonのインストール、権限・PATHの変更は自動では行いません。
+
+ランナーはGo 1.26.8と固定した依存関係で事前にビルドし、SHA-256を照合します。Goが必要なのはビルド環境だけです。準備済み成果物を`--gitleaks-runner /path/to/verified/gitleaks-runner`で渡してください。公式Gitleaks CLIの`--gitleaks`とは別物です。[オフラインビルド手順](skills/secret-checks/references/runner.md)を参照してください。hook実行時にダウンロードやビルドはしません。
 
 両方の検査を導入する依頼例：
 
-> secret-checksを使って、このリポジトリにcombined方式を`--runtime docker`で導入して。固定版Gitleaksの取得元・準備場所・bundle配置先・image IDを報告して。既存の検証済みバイナリが使えるか確認し、なければ承認済みの取得手順を使って。Dockerや取得手順が使えない場合は停止し、ネイティブ方式へ切り替えないで。導入後は設定・整合性・拒否動作を検証し、解除・cleanupで何が残るかも報告して。commit・pushはしないで。
+> secret-checksを使って、このリポジトリにcombined方式を`--runtime docker`で導入して。固定版ランナーの取得元・準備場所・bundle配置先・image IDを報告して。既存の検証済みランナーが使えるか確認し、なければ承認済みの取得・ビルド手順を使って。Dockerや取得手順が使えない場合は停止し、ネイティブ方式へ切り替えないで。導入後は設定・整合性・拒否動作を検証し、解除・cleanupで何が残るかも報告して。commit・pushはしないで。
 
-既存の導入先は自動移行しません。Dockerへの変更には`update --runtime docker`を使います。Python単独方式から変更する場合は`--engine combined`と検証済みバイナリも指定します。ネイティブ方式は明示的に選んだ場合のみ利用します。
+既存の導入先は自動移行しません。旧版から初めて更新する際は`update --gitleaks-runner ...`を指定します。Dockerへ変更する場合は`--runtime docker`、Python単独方式から併用へ変更する場合は`--engine combined`も追加します。旧bundleへのrollbackは可能です。ネイティブ方式は明示的に選んだ場合のみ利用します。
 
 `uninstall`はhookを解除し、続く`cleanup --apply`は管理対象の不要なbundleを削除します。共有され得るDockerイメージは保持してIDを報告し、元の取得ファイルやSkill本体も削除しません。イメージ削除は利用先を確認したうえで別途行います。[Docker方式の手順と制約](skills/secret-checks/references/docker.md)、[配置・取得・検証・削除の管理方針](skills/secret-checks/references/gitleaks.md)を参照してください。
 
@@ -137,10 +139,10 @@ python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_scan_sens
 python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_manage_hooks.py' -v
 ```
 
-Gitleaksの実物を使うテストは、照合済みbinaryを指定して実行します。
+ランナーの実物と公式Gitleaks CLIの比較テストは、照合済みの両方のbinaryを指定して実行します。Docker実機テストを含める場合は`SECRET_CHECKS_DOCKER=1`も指定します。
 
 ```sh
-SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_*.py' -v
+SECRET_CHECKS_RUNNER=/path/to/verified/gitleaks-runner SECRET_CHECKS_GITLEAKS=/path/to/verified/gitleaks python3 -B -m unittest discover -s skills/secret-checks/evals -p 'test_*.py' -v
 ```
 
 binary未指定時はGitleaksの実物を必要とするケースがskipになります。[検証記録](skills/secret-checks/evals/validation.md)では、実行結果と未実施のAgent動作評価・live環境検証を区別します。このリポジトリにはスキャナー・hook・テストの正本を置き、`product-security-guidance`には設計意図と実装への参照を残します。

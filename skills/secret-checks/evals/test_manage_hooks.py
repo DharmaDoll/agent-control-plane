@@ -188,10 +188,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result["reason"], "GITLEAKS_BINARY_REQUIRES_GITLEAKS_ENGINE")
 
     def test_verified_gitleaks_lifecycle(self):
-        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        binary = os.environ.get("SECRET_CHECKS_RUNNER")
         if not binary:
-            self.skipTest("SECRET_CHECKS_GITLEAKS is required for the real Gitleaks lifecycle")
-        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks", binary)
+            self.skipTest("SECRET_CHECKS_RUNNER is required for the real Gitleaks lifecycle")
+        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks-runner", binary)
         self.manage("verify")
         self.manage("update")
         self.assertEqual(self.state()["bundles"][self.state()["active"]]["engine"], "gitleaks")
@@ -210,13 +210,32 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.state(), before)
         self.assertEqual((self.repo / ".git/config").read_bytes(), config)
 
-    def test_combined_real_lifecycle_and_missing_child(self):
+    def test_unverified_runner_and_runner_on_python_are_refused(self):
+        fake = self.root / "runner"
+        fake.write_bytes(b"unverified executable")
+        for args, reason in ((["--engine", "gitleaks", "--gitleaks-runner", str(fake)], "RUNNER_DIGEST_MISMATCH"),
+                             (["--gitleaks-runner", str(fake)], "RUNNER_REQUIRES_GITLEAKS_ENGINE")):
+            r, report = self.manage("install", *args, ok=False)
+            self.assertEqual(r.returncode, 2)
+            self.assertEqual(report["reason"], reason)
+            self.assertFalse((self.repo / ".git/secret-checks").exists())
+
+    def test_legacy_cli_alone_cannot_install_new_bundle(self):
         binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
         if not binary:
             self.skipTest("SECRET_CHECKS_GITLEAKS required")
+        r, report = self.manage("install", "--engine", "gitleaks", "--gitleaks", binary, ok=False)
+        self.assertEqual(r.returncode, 2)
+        self.assertEqual(report["reason"], "VERIFIED_GITLEAKS_RUNNER_REQUIRED")
+        self.assertFalse((self.repo / ".git/secret-checks").exists())
+
+    def test_combined_real_lifecycle_and_missing_child(self):
+        binary = os.environ.get("SECRET_CHECKS_RUNNER")
+        if not binary:
+            self.skipTest("SECRET_CHECKS_RUNNER required")
         self.manage("install")
         original = self.state()["active"]
-        self.manage("update", "--engine", "combined", "--gitleaks", binary)
+        self.manage("update", "--engine", "combined", "--gitleaks-runner", binary)
         combined = self.state()["active"]
         self.assertEqual(self.state()["bundles"][combined]["engine"], "combined")
         self.manage("verify")
@@ -254,24 +273,24 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(list((self.repo / ".git/secret-checks/bundles").iterdir()), [])
 
     def test_gitleaks_to_combined_reuses_verified_binary(self):
-        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        binary = os.environ.get("SECRET_CHECKS_RUNNER")
         if not binary:
-            self.skipTest("SECRET_CHECKS_GITLEAKS required")
-        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks", binary)
+            self.skipTest("SECRET_CHECKS_RUNNER required")
+        self.manage("install", "--engine", "gitleaks", "--runtime", "native", "--gitleaks-runner", binary)
         self.manage("update", "--engine", "combined")
         self.assertEqual(self.state()["bundles"][self.state()["active"]]["engine"], "combined")
         self.manage("verify")
 
     def test_combined_probe_detects_one_engine_silently_passing(self):
-        binary = os.environ.get("SECRET_CHECKS_GITLEAKS")
+        binary = os.environ.get("SECRET_CHECKS_RUNNER")
         if not binary:
-            self.skipTest("SECRET_CHECKS_GITLEAKS required")
+            self.skipTest("SECRET_CHECKS_RUNNER required")
         self.manage("install")
         before = self.state()["active"]
         copy = self.root / "faulty skill"
         shutil.copytree(SKILL, copy, ignore=shutil.ignore_patterns("__pycache__"))
         (copy / "scripts/gitleaks_gate.py").write_text("raise SystemExit(0)\n")
-        result, report = self.manage("update", "--engine", "combined", "--gitleaks", binary,
+        result, report = self.manage("update", "--engine", "combined", "--gitleaks-runner", binary,
                                      script=copy / "scripts/manage_hooks.py", ok=False)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(report["reason"], "PROBE_COMBINED_ENGINE_RESULT_MISSING")

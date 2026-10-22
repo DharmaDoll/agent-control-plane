@@ -5,15 +5,16 @@ import re
 import subprocess
 import tarfile
 import tempfile
+import time
 
 DOCKER = ["/usr/bin/docker", "--host", "unix:///var/run/docker.sock"]
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 DOCKERFILE = b"""FROM scratch
-COPY gitleaks /gitleaks
+COPY gitleaks-runner /gitleaks-runner
 COPY gitleaks.toml /gitleaks.toml
 USER 65532:65532
-ENTRYPOINT ["/gitleaks"]
+ENTRYPOINT ["/gitleaks-runner"]
 """
 
 
@@ -34,7 +35,7 @@ def build_image(binary, configuration):
     context = io.BytesIO()
     with tarfile.open(fileobj=context, mode="w") as archive:
         for name, content, mode in (("Dockerfile", DOCKERFILE, 0o444),
-                                    ("gitleaks", binary, 0o555),
+                                    ("gitleaks-runner", binary, 0o555),
                                     ("gitleaks.toml", configuration, 0o444)):
             entry = tarfile.TarInfo(name)
             entry.size, entry.mode, entry.mtime = len(content), mode, 0
@@ -57,7 +58,14 @@ def verify_image(identity):
         raise RuntimeError("DOCKER_IMAGE_UNAVAILABLE")
 
 
-def scan(identity, arguments, data):
+def scan(identity, arguments, data, *, deadline=None):
+    if deadline is None:
+        deadline = time.monotonic() + 120
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0:
+            raise RuntimeError("DOCKER_SCAN_DEADLINE")
+        return value
     verify_image(identity)
     # Create first so cleanup can target an exact daemon-issued ID, not a name.
     created = command([
@@ -66,15 +74,15 @@ def scan(identity, arguments, data):
         "--security-opt=no-new-privileges", "--pids-limit=64",
         "--memory=256m", "--memory-swap=256m", "--cpus=1",
         "--label=org.agent-control-plane.secret-checks=gitleaks",
-        "--log-driver=none", "--entrypoint=/gitleaks", identity, *arguments,
-    ])
+        "--log-driver=none", "--env=GOTRACEBACK=none", "--entrypoint=/gitleaks-runner", identity, *arguments,
+    ], timeout=min(15, remaining()))
     container = created.stdout.decode("ascii", errors="replace").strip()
     if created.returncode or not CONTAINER_ID.fullmatch(container):
         raise RuntimeError("DOCKER_CONTAINER_CREATE_FAILED")
     try:
-        result = command(["start", "--attach", "--interactive", container], data=data)
+        result = command(["start", "--attach", "--interactive", container], data=data, timeout=remaining())
         # docker start's CLI status alone is not the scanner's exit status.
-        state = command(["inspect", "--format", "{{json .State}}", container])
+        state = command(["inspect", "--format", "{{json .State}}", container], timeout=min(15, remaining()))
         if state.returncode:
             raise RuntimeError("DOCKER_CONTAINER_STATE_UNAVAILABLE")
         try:
