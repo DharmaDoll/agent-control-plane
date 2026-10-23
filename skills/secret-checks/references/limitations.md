@@ -21,8 +21,9 @@ Both engines apply [image allowances and publication budgets](images-and-publica
 Allowed image extensions exempt contents after header recognition, not decoding; SVG remains text-scanned.
 The text-only restrictions below apply to all other input.
 
-- Uses Python's standard library and the inherited example's 12 explicit secret
-  patterns plus sensitive filename policy. It does not claim Gitleaks-equivalent
+- Uses Python's standard library with curated token patterns, explicit credential
+  fields, URL/Basic checks and sensitive filename policy. See the
+  [rule catalog and limits](python-rules.md). It does not claim Gitleaks-equivalent
   coverage. Environment templates are name-allowed but still content-scanned.
 - `pre-commit` scans added/changed/renamed index blobs, not the worktree. It rejects
   unresolved index entries, symlinks and submodules. Unchanged existing index blobs

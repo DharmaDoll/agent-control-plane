@@ -114,6 +114,45 @@ diagnostics, disable core dumps and apply memory/CPU/wall-time limits. They are
 not a sandbox against native decoder compromise. Gitleaks retains Docker-first
 execution and its existing batch runner/protocol. No image rewriting is allowed.
 
+## Python detection expansion (2026-10-23)
+
+Accepted implementation scope: credential-bearing HTTP/database URLs, bounded
+Basic Authorization decoding, quoted/inline/export credential assignments and
+service-specific tokens. Use distinctive token structure or explicitly named
+credential fields; public IDs and publishable keys must not become generic
+secrets. Keep standard-library-only execution, redacted diagnostics, image and
+publication policy, scan budgets and engine scheduling unchanged. Do not change
+installed bundles, publish Git changes, or compare Gitleaks detection coverage.
+
+Work sequence: (1) baseline and failing tests; (2) deterministic rules and shared
+content/label/ref checks; (3) positive/negative/boundary/redaction and real-hook
+tests; (4) long-input comparison and the complete Docker/lifecycle regression
+suite; (5) rule catalog, limitations and measured evidence. Each step depends on
+the previous one; implementation is authorized, deployment is not.
+
+Performance acceptance: each synthetic 5 MiB probe must finish cleanly within
+10 seconds on the same local interpreter; compare smaller inputs for suspicious
+growth. This is a regression probe, not a hardware-independent SLA or proof of
+the absence of ReDoS. All existing regression tests must pass, including real
+combined Docker hooks and historical bundle rollback/cleanup. New patterns must
+reject synthetic credentials without logging their values, distinguish public
+keys, and preserve index/message/history scanning. Invalid Basic encodings are
+not credentials by themselves; oversized recognized Basic candidates must fail
+closed. No network validation of any token is allowed.
+
+Implementation and focused verification are complete: 32 regex IDs, 14 explicit
+field IDs, shared URL/Basic checks, all service fixtures and actual Git hook
+refusals. Long-input probes pass the chosen limit; an inherited repeated-newline
+performance issue was fixed. The first full run was invalidated by source edits
+during lifecycle tests. Final frozen-code regression passed all 128 tests in
+421.446 seconds without skips, including Docker and lifecycle/rollback/cleanup.
+The Go runner's four tests and controlled-github's 30 tests also passed. All
+implementation and documentation steps are complete; deployment remains a
+separate, unauthorized operation for this task. See the
+[evidence record](../skills/secret-checks/evals/validation.md#python-rule-expansion-2026-10-23)
+and the self-contained
+[rule catalog](../skills/secret-checks/references/python-rules.md).
+
 ## Accepted scope
 
 Make this repository the canonical home of the Python scanner and Gitleaks

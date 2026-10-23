@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -11,6 +13,7 @@ import re
 import subprocess
 import sys
 import signal
+from urllib.parse import unquote_to_bytes
 
 # -I omits the script directory. Add only the reviewed bundle's module directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -58,7 +61,7 @@ SECRET_RULES = {
     "github-fine-grained-pat": rb"\bgithub_pat_[A-Za-z0-9_]{82}\b",
     "aws-access-key": rb"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b",
     "aws-secret-access-key": (
-        rb"(?im)^\s*(?:aws_)?secret_access_key\s*[:=]\s*['\"]?"
+        rb"(?i)\b(?<!-)(?:aws_)?secret_access_key['\"]?\s*[:=]\s*['\"]?"
         rb"[A-Za-z0-9/+=]{40}(?=$|[\s'\"])"
     ),
     "google-api-key": rb"\bAIza[0-9A-Za-z_-]{35}\b",
@@ -72,20 +75,108 @@ SECRET_RULES = {
         rb"[A-Za-z0-9]{8,}/[A-Za-z0-9]{16,}"
     ),
     "npmrc-auth-token": (
-        rb"(?im)^\s*//[^\s=]+/:_(?:authToken|auth|password)\s*=\s*"
+        rb"(?im)^[\t ]*//[^\s=]+/:_(?:authToken|auth|password)\s*=\s*"
         rb"['\"]?[A-Za-z0-9+/=_-]{20,}"
     ),
     "pypi-api-token": rb"\bpypi-[A-Za-z0-9_-]{85,}\b",
     "credential-assignment": (
-        rb"(?im)^\s*(?:api[_-]?key|client[_-]?secret|password|token|"
+        rb"(?i)\b(?<!-)(?:api[_-]?key|client[_-]?secret|password|token|"
         rb"access[_-]?token|refresh[_-]?token|auth[_-]?token|"
         rb"private[_-]?token|webhook[_-]?secret|signing[_-]?secret)"
-        rb"\s*[:=]\s*['\"]?[A-Za-z0-9/+_.-]{12,}"
+        rb"['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9/+_.-]{12,}"
     ),
+    "openai-token": rb"\bsk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,200}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})(?![\w-])",
+    "anthropic-token": rb"\bsk-ant-(?:api03|admin01)-[A-Za-z0-9_-]{93}AA(?![\w-])",
+    "huggingface-token": rb"\b(?:hf_|api_org_)[A-Za-z]{34}(?![\w-])",
+    "gitlab-token": rb"\b(?:glpat-|gldt-|glrt-|glrtr-)[A-Za-z0-9_-]{20,300}(?:\.[a-z0-9]{9})?(?![\w.-])",
+    "npm-token": rb"\bnpm_[A-Za-z0-9]{36}(?![\w-])",
+    "dockerhub-token": rb"\bdckr_pat_[A-Za-z0-9_-]{27,128}(?![\w-])",
+    "vercel-token": rb"\bvc[piark]_[A-Za-z0-9_-]{24,200}(?![\w-])",
+    "supabase-secret": rb"\bsb_secret_[A-Za-z0-9_-]{20,200}(?![\w-])",
+    "digitalocean-token": rb"\bdo[opr]_v1_[a-f0-9]{64}(?![\w-])",
+    "slack-token": rb"\b(?:xox[bpars]-[A-Za-z0-9-]{20,200}|xapp-[0-9]-[A-Z0-9]+-[0-9]+-[a-z0-9]+)(?![\w-])",
+    "discord-webhook": rb"https://(?:(?:canary|ptb)\.)?discord(?:app)?\.com/api(?:/v[0-9]+)?/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{50,100}(?![\w-])",
+    "notion-token": rb"\bntn_[A-Za-z0-9]{46,80}(?![\w-])",
+    "atlassian-token": rb"\bATATT3[A-Za-z0-9_=-]{186}(?![\w=-])",
+    "linear-token": rb"\blin_api_[A-Za-z0-9]{40}(?![\w-])",
+    "stripe-secret": rb"\b(?:[sr]k_(?:live|test|prod)_[A-Za-z0-9]{10,200}|whsec_[A-Za-z0-9]{20,200})(?![\w-])",
+    "sendgrid-token": rb"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}(?![\w-])",
+    "resend-token": rb"\bre_[A-Za-z0-9_]{32,100}(?![\w-])",
+    "grafana-token": rb"\b(?:glsa_[A-Za-z0-9]{32}_[a-f0-9]{8}|glc_[A-Za-z0-9+/=_-]{32,400})(?![\w/+=-])",
+    "vault-token": rb"\bhv[bs]\.[A-Za-z0-9_-]{24,300}(?![\w-])",
+    "azure-sas-url": rb"https://[A-Za-z0-9.-]+\.(?:blob|file|queue|table)\.core\.windows\.net/[^\s\"'<>]{0,4096}[?&]sig=[A-Za-z0-9%/+_-]{20,}(?:=|%3[Dd])?",
 }
 COMPILED_RULES = {
     name: re.compile(pattern) for name, pattern in SECRET_RULES.items()
 }
+
+# Opaque credentials need a specific field name, never just a service name in
+# nearby prose. Values and names are ASCII/case-sensitive and insensitive,
+# respectively. This is lexical detection, not a language parser.
+CONTEXT_RULES = {
+    "ai-key-assignment": ("openai_api_key anthropic_api_key huggingface_token hf_token", rb"[A-Za-z0-9_./+=~-]{20,512}"),
+    "cloudflare-credential": ("cloudflare_api_token cloudflare_api_key cf_api_token cf_api_key", rb"[A-Za-z0-9_-]{37,40}"),
+    "azure-credential": ("azure_client_secret azure_storage_key accountkey", rb"[A-Za-z0-9_./+=~-]{32,128}"),
+    "azure-sas": ("azure_storage_sas_token sharedaccesssignature", rb"[^\s'\"]{20,4096}"),
+    "netlify-token": ("netlify_auth_token netlify_api_token", rb"[A-Za-z0-9_=-]{40,128}"),
+    "vercel-token-assignment": ("vercel_token vercel_api_token", rb"[A-Za-z0-9_-]{24,200}"),
+    "supabase-service-role": ("supabase_service_role_key service_role_key", rb"[A-Za-z0-9_.-]{20,512}"),
+    "discord-token": ("discord_token discord_bot_token discord_client_secret", rb"[A-Za-z0-9_.-]{32,200}"),
+    "notion-token-assignment": ("notion_token notion_api_key notion_secret", rb"(?:secret_|ntn_)[A-Za-z0-9]{32,80}"),
+    "atlassian-token-assignment": ("atlassian_api_token jira_api_token confluence_api_token", rb"[A-Za-z0-9_=-]{24,256}"),
+    "datadog-api-key": ("dd_api_key datadog_api_key", rb"[a-fA-F0-9]{32}"),
+    "datadog-app-key": ("dd_app_key dd_application_key datadog_app_key datadog_application_key", rb"[a-fA-F0-9]{40}"),
+    "grafana-token-assignment": ("grafana_api_key grafana_token", rb"[A-Za-z0-9_./+=-]{32,512}"),
+    "vault-token-assignment": ("vault_token", rb"(?:s\.[A-Za-z0-9]{24}|hv[bs]\.[A-Za-z0-9_-]{24,300})"),
+}
+CONTEXT_KEYS = {key.encode(): name for name, (keys, _) in CONTEXT_RULES.items()
+                for key in keys.split()}
+CONTEXT_VALUES = {name: re.compile(value) for name, (_, value) in CONTEXT_RULES.items()}
+CONTEXT_ASSIGNMENT = re.compile(
+    rb"(?i)\b(?<!-)(" + b"|".join(map(re.escape, CONTEXT_KEYS)) +
+    rb")[\"']?\s*[:=]\s*[\"']?([^\s\"',;{}]{1,4097})"
+)
+BASIC_HEADER = re.compile(
+    rb"(?i)\b(?<!-)(?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?"
+    rb"Basic[\t ]+([^\s\"',;<>]{1,4097})"
+)
+URL_AUTHORITY = re.compile(
+    rb"(?i)\b(?:https?|postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?)://"
+    rb"([^\s/\"'<>?#]+)"
+)
+VARIABLE = re.compile(rb"(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*)\Z")
+
+
+def matching_rules(content: bytes) -> set[str]:
+    """Inspect one byte string without returning or logging matched material."""
+    found = {name for name, pattern in COMPILED_RULES.items() if pattern.search(content)}
+    for match in CONTEXT_ASSIGNMENT.finditer(content):
+        name = CONTEXT_KEYS[match[1].lower()]
+        if CONTEXT_VALUES[name].fullmatch(match[2]):
+            found.add(name)
+    for match in BASIC_HEADER.finditer(content):
+        encoded = match[1]
+        if len(encoded) > 4096:
+            raise ScanError("credential candidate exceeds limit")
+        try:
+            decoded = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            continue
+        _user, separator, decoded_password = decoded.partition(b":")
+        if separator and decoded_password and not VARIABLE.fullmatch(decoded_password):
+            found.add("basic-auth")
+    for match in URL_AUTHORITY.finditer(content):
+        authority = match[1]
+        userinfo, separator, host = authority.rpartition(b"@")
+        if not separator or not host:
+            continue
+        if len(authority) > 4096:
+            raise ScanError("credential candidate exceeds limit")
+        _user, separator, raw_password = userinfo.partition(b":")
+        decoded_password = unquote_to_bytes(raw_password)
+        if separator and decoded_password and not VARIABLE.fullmatch(decoded_password):
+            found.add("credential-url")
+    return found
 
 
 class ScanError(RuntimeError):
@@ -136,8 +227,8 @@ def scan(label: str, content: bytes, *, file_content: bool = False) -> list[tupl
     if file_content and IMAGES.allow(label, content):
         # Preserve name policy and secret-like name checks, not raster contents.
         findings = [("sensitive-filename", label)] if blocked_path(label) else []
-        findings.extend((name, label) for name, pattern in COMPILED_RULES.items()
-                        if pattern.search(label.encode('utf-8', errors='surrogateescape')))
+        findings.extend((name, label) for name in sorted(matching_rules(
+            label.encode('utf-8', errors='surrogateescape'))))
         return findings
     _total += len(content)
     if _total > MAX_TOTAL_BYTES:
@@ -150,9 +241,9 @@ def scan(label: str, content: bytes, *, file_content: bool = False) -> list[tupl
     findings: list[tuple[str, str]] = []
     if blocked_path(label):
         findings.append(("sensitive-filename", label))
-    for name, pattern in COMPILED_RULES.items():
-        if pattern.search(content) or pattern.search(label.encode("utf-8", errors="surrogateescape")):
-            findings.append((name, label))
+    for name in sorted(matching_rules(content) | matching_rules(
+            label.encode("utf-8", errors="surrogateescape"))):
+        findings.append((name, label))
     return findings
 
 
@@ -216,7 +307,7 @@ def introduced_commits() -> list[str]:
         if not remote_ref.startswith("refs/heads/"):
             raise ScanError("only branch updates are supported by the Python scanner")
         # Ref names are metadata too; never echo them.
-        if any(pattern.search(remote_ref.encode()) for pattern in COMPILED_RULES.values()):
+        if matching_rules(remote_ref.encode()):
             raise MetadataFinding("sensitive ref metadata")
         if ZERO_OID.fullmatch(local_oid):
             continue

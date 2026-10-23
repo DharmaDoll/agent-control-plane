@@ -110,6 +110,8 @@ Skillのコピーだけではhookは有効になりません。導入時に環�
 
 Python方式でGitがhookを起動し、indexとcommitメッセージの検査結果を受けて処理を続行・中止する流れは、[Python hookの実行フロー](skills/secret-checks/references/python-hook-flow.md)にまとめています。実装に基づく英語の技術文書で、ユーザー名・導入先のプロジェクト名・実際のbundle IDを含まない例を使っています。
 
+Pythonスキャナは、主要サービスのトークン、JSON・`export`内の資格情報、認証情報入りURL、Basic認証ヘッダーも検査します。公開用キーと秘密キーを区別し、外部ライブラリやネットワーク照会は使いません。対象と制限は[検出ルール一覧](skills/secret-checks/references/python-rules.md)を参照してください。形式による検出なので、見逃し・誤検出はあり得ます。
+
 Gitleaks方式の詳しい実行経路は、[Gitleaks hookとGoランナーの実行フロー](skills/secret-checks/references/gitleaks-hook-flow.md)にまとめています。GoへGitleaksをライブラリとして組み込む仕組み、入力ごとの分離、fragment処理、完了結果の照合、Dockerの実行・終了処理を説明しています。
 
 新規導入はcombined／Dockerがデフォルトです。`pre-commit`と`commit-msg`はPythonのみ、`pre-push`はPython → Gitleaksの両方を実行します。画像のバイト数制限・大量投入制限は維持し、必須の検査で検出・検査不能・スキャナ欠落があれば拒否します。commit時にもGitleaksを使う場合は、導入・更新時に`--commit-gitleaks on`を指定してください。

@@ -81,6 +81,10 @@ leaks or silently convert an existing installation.
 For an explanation of the Python engine's normal commit path, read
 [python-hook-flow.md](references/python-hook-flow.md). It traces Git's hook
 selection, index/message inspection, refusal behavior, and verification limits.
+Read [python-rules.md](references/python-rules.md) for supported service tokens,
+explicit credential fields, URL/Basic checks and public-key distinctions. These
+are offline heuristics, not credential validity checks; do not weaken rules or
+promise exhaustive coverage when a fixture is refused or a scan passes.
 
 Use `verify` after setup or when investigating drift. Report configuration,
 bundle integrity, and isolated hook behavior separately. The probe tests safe

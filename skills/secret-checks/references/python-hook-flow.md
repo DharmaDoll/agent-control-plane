@@ -168,8 +168,9 @@ inspection.
 
 ## 5. Detection rules and filename policy
 
-`scan()` applies these 12 regular-expression rule IDs to the content bytes and
-the encoded target label, which is the path in staged mode:
+`scan()` applies the shared `matching_rules()` detector to the content bytes and
+the encoded target label, which is the path in staged mode. The original rules
+below remain, with assignment handling extended to quoted/inline/export forms:
 
 ```text
 private-key
@@ -190,6 +191,15 @@ credential-assignment
 `client_secret` when the assigned value matches its format and length rules.
 There is no provider API call to determine whether a credential is valid. A dummy
 value that matches a rule can be rejected too.
+
+The detector now also covers service-specific tokens, allowlisted credential
+fields, credential-bearing HTTP/database URLs and bounded Basic Authorization
+decoding. See [python-rules.md](python-rules.md) for the current catalog, exact
+scope, public-key distinctions and unsupported forms. Decoding uses only the
+standard library; it does not call a provider, recursively decode arbitrary
+content or disclose decoded bytes. Oversized recognized Basic candidates and
+credential-bearing URL authorities stop as incomplete. Outgoing destination
+refs use the same detector. Findings are sorted and deduplicated per rule/target.
 
 Separate filename checks reject names such as `.env`, ordinary `.env.*`, `.netrc`,
 `credentials.json` and `id_rsa`, and selected extensions such as `.pem`, `.key`,
