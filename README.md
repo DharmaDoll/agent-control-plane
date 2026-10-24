@@ -11,6 +11,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 | [controlled-github](skills/controlled-github/SKILL.md) | Gitの状態確認、対象ファイルを限定したcommit、送信する全commitを確認したpush、push済みbranchからのPR作成 |
 | [spec-driven-development](skills/spec-driven-development/SKILL.md) | 要求を仕様・受入基準・小さなタスクに整理し、依頼された範囲でテスト・実装・検証・引き継ぎを進める |
 | [secret-checks](skills/secret-checks/SKILL.md) | ローカル環境と既存hookを診断し、秘密情報の検査hookを導入・検証・更新・切り戻し・解除・cleanupする |
+| [codex-hardening](skills/codex-hardening/SKILL.md) | Codex CLIの版と設定を診断し、専用profileの導入・sandbox動作検証・復旧を行う |
 
 ## 導入と使い方
 
@@ -29,7 +30,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 ```text
 $skill-installer
 
-以下のGitHubリポジトリから、3つのSkillを導入してください。
+以下のGitHubリポジトリから、4つのSkillを導入してください。
 
 repository: DharmaDoll/agent-control-plane
 ref: main
@@ -37,6 +38,7 @@ paths:
 - skills/spec-driven-development
 - skills/controlled-github
 - skills/secret-checks
+- skills/codex-hardening
 
 配置先は、このリポジトリのルートにある .agents/skills/ としてください。
 各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
@@ -83,6 +85,20 @@ paths:
 > secret-checksを使って、使わなくなった検査hookを解除し、管理対象の不要なbundleをcleanupして。
 
 Skillのコピーだけではhookは有効になりません。導入時に環境を診断し、既存hookや共有worktreeがある場合は統合方法を検討します。通常のcommit・pushでは、Git標準hookが検査を呼び出します。導入・更新・切り戻し・解除・cleanupの具体的な操作は[導入手順](skills/secret-checks/references/installation.md)、検査範囲と適用できない条件は[制限事項](skills/secret-checks/references/limitations.md)にあります。
+
+### Codex CLIの実行環境を整える
+
+`codex-hardening`は、Codex CLIのバージョン・設定の競合を確認し、調査用／通常開発用の専用profileを管理します。既存の`config.toml`、認証、MCP、履歴は書き換えません。Skillを配置しただけでは設定は有効になりません。
+
+> codex-hardeningを使って、この環境のCodex CLIと設定を診断し、通常開発用profileの変更案を提示して。まだ適用・認証変更・履歴削除はしないで。
+
+> codex-hardeningを使って、確認済みの計画を適用し、許可範囲内の書き込みと、対象外の書き込み・通信の拒否を検証して。復旧方法と未検証事項も報告して。
+
+初期対応はLinux x86_64のCodex CLI **0.163.0**です。**Python 3.11以上**の標準ライブラリだけを使い、追加パッケージや専用Python環境は不要です。既存の3.11以上がなければ停止し、自動インストールはしません。WSL2は導入先で検証し、macOS・Windows・他の版を対応済みとは扱いません。
+
+更新に追従するため、安全方針と[互換性定義・更新手順](skills/codex-hardening/references/compatibility.md)を分離しています。未知の版や設定の競合では診断結果を返して適用を停止します。Codexや関連設定が変わったら再検証しますが、Codex本体の更新や常時監視は行いません。既存のproject設定・管理ポリシー・許可ルールなどがある環境は、初期版では追加レビューが必要になる場合があります。
+
+profileは`<codex-home>/acp-review.config.toml`または`acp-development.config.toml`に配置され、新しいセッションで明示的に選択します。検証には一時ファイルとローカル接続を使い、モデルや外部サービスを呼びません。sandboxの起動失敗は拒否成功に数えません。Web・MCP・承認UI・ログ保存の安全性や秘密情報の読み取り防止は別の確認事項です。[操作・復旧手順](skills/codex-hardening/references/operations.md)と[制限事項](skills/codex-hardening/references/limitations.md)を参照してください。
 
 ### Gitleaksはどこに配置・実行されるか
 

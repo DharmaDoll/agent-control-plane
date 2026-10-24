@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "linux-permissions-0163",
+      "versions": ["0.163.0"],
+      "platform": "linux",
+      "machine": ["x86_64"],
+      "renderer": "permissions-v1",
+      "probe": "sandbox-permissions-v1",
+      "required_help": {
+        "root": ["--strict-config", "--profile"],
+        "sandbox": ["--profile", "--permission-profile", "--cd"],
+        "rules": ["--rules"]
+      },
+      "sources": [
+        "https://learn.chatgpt.com/docs/config-file/config-advanced",
+        "https://learn.chatgpt.com/docs/agent-approvals-security",
+        "https://learn.chatgpt.com/docs/permissions"
+      ],
+      "reviewed": "2026-10-24"
+    }
+  ]
+}
