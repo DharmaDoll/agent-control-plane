@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import tomllib
@@ -284,7 +285,203 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(self.manager.target.exists())
 
 
+class ConfigFixture(unittest.TestCase):
+    """Use the real collector/parser with files under an isolated HOME layout."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="codex-hardening-layers-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.user_home = self.root / "user"
+        self.home = self.user_home / ".codex"
+        self.work = self.user_home / "projects" / "app"
+        self.home.mkdir(parents=True)
+        self.work.mkdir(parents=True)
+        self.config = self.home / "config.toml"
+        self.config.write_text('model = "fixture-only"\n')
+        self.manager = h.Manager(self.home, self.work, Path(sys.executable).resolve(), "development")
+        detection = patch.object(h, "detect", return_value=(
+            {"path": "fixture", "sha256": "a" * 64}, "0.163.0", {"id": "fixture"}))
+        detection.start()
+        self.addCleanup(detection.stop)
+        original_read = h.read_file
+
+        def read_fixture(path, limit=h.MAX_FILE):
+            # Hide host/system config contents, not the layer collector or the
+            # parser. Real CLI tests below exercise the unmocked lifecycle.
+            path = Path(path)
+            if path.is_relative_to(self.root) or path.is_relative_to(h.ROOT):
+                return original_read(path, limit)
+            return None
+
+        reader = patch.object(h, "read_file", side_effect=read_fixture)
+        self.reader = reader.start()
+        self.addCleanup(reader.stop)
+
+
+class ConfigLayerTests(ConfigFixture):
+    def test_normal_home_user_config_is_read_once_without_project_blocker(self):
+        result = self.manager.inspect()
+        self.assertEqual(result["status"], "READY", result["issues"])
+        self.assertEqual([kind for path, kind in self.manager.layers() if path == self.config], ["user"])
+        self.assertEqual(sum(call.args[0] == self.config for call in self.reader.call_args_list), 1)
+        self.assertFalse(self.manager.directory.exists())
+
+    def test_custom_home_and_sibling_workspace(self):
+        custom_home = self.root / "custom-codex"
+        custom_home.mkdir()
+        (custom_home / "config.toml").write_text('model = "fixture-only"\n')
+        manager = h.Manager(custom_home, self.root, sys.executable, "review")
+        result = manager.inspect()
+        self.assertEqual(result["status"], "READY", result["issues"])
+        # A different .codex/config.toml in the workspace's ancestry is still
+        # a project candidate, even when a custom CODEX_HOME is selected.
+        manager = h.Manager(custom_home, self.work, sys.executable, "review")
+        self.assertIn((self.config, "project"), manager.layers())
+        self.assertEqual(manager.inspect()["issues"], ["REVIEW_REQUIRED_PROJECT"])
+
+    def test_workspace_equal_to_home_parent(self):
+        manager = h.Manager(self.home, self.user_home, sys.executable, "review")
+        result = manager.inspect()
+        self.assertEqual(result["status"], "READY", result["issues"])
+
+    def test_distinct_project_configs_are_not_skipped(self):
+        for parent in (self.user_home / "projects", self.work):
+            config = parent / ".codex" / "config.toml"
+            config.parent.mkdir()
+            config.write_text('model = "project-fixture"\n')
+            self.assertIn((config, "project"), self.manager.layers())
+        self.assertEqual(self.manager.inspect()["issues"], ["REVIEW_REQUIRED_PROJECT"])
+
+    def test_user_permission_conflict_is_still_blocked(self):
+        self.config.write_text('sandbox_mode = "workspace-write"\n')
+        self.assertEqual(self.manager.inspect()["issues"], ["PERMISSION_MODEL_CONFLICT"])
+
+    def test_overlapping_hooks_and_rules_still_require_review(self):
+        hooks = self.home / "hooks.json"
+        hooks.write_text("{}")
+        rules = self.home / "rules"
+        rules.mkdir()
+        rule = rules / "fixture.rules"
+        rule.write_text("# inert fixture")
+        layers = self.manager.layers()
+        self.assertEqual(layers.count((hooks, "hooks")), 1)
+        self.assertEqual(layers.count((rule, "rules")), 1)
+        self.assertEqual(self.manager.inspect()["issues"], ["REVIEW_REQUIRED_HOOKS", "REVIEW_REQUIRED_RULES"])
+
+    def test_managed_role_is_not_hidden_by_selected_home(self):
+        # Structural-only check: no /etc file is read or written by this test.
+        self.manager.home = Path("/etc/codex")
+        self.assertIn((Path("/etc/codex/config.toml"), "managed"), self.manager.layers())
+
+    def test_aliases_are_rejected_not_deduplicated(self):
+        project_dir = self.work / ".codex"
+        project_dir.mkdir()
+        project = project_dir / "config.toml"
+        project.symlink_to(self.config)
+        with self.assertRaisesRegex(h.Stop, "SYMLINK_PATH"):
+            self.manager.inspect()
+        project.unlink()
+        os.link(self.config, project)
+        with self.assertRaisesRegex(h.Stop, "UNSUPPORTED_FILE"):
+            self.manager.inspect()
+
+    def test_config_changes_still_invalidate_plan(self):
+        before = self.manager.plan()
+        self.config.write_text('model = "changed-fixture"\n')
+        after = self.manager.plan()
+        self.assertNotEqual(before["plan_id"], after["plan_id"])
+        self.assertFalse(self.manager.directory.exists())
+
+
+class ConfigPreferenceTests(ConfigFixture):
+    def setUp(self):
+        super().setUp()
+        detection = patch.object(h, "detect", return_value=(
+            {"path": "fixture", "sha256": "a" * 64}, "0.164.0",
+            {"id": "fixture", "config_policy": "preferences-v1"}))
+        detection.start()
+        self.addCleanup(detection.stop)
+        self.project = self.work / ".codex" / "config.toml"
+        self.project.parent.mkdir()
+
+    def test_preferences_are_preserved_and_compatible(self):
+        preferences = ('model = "fixture-only"\nmodel_reasoning_effort = "high"\n'
+                       'model_reasoning_summary = "none"\nmodel_verbosity = "low"\n'
+                       'hide_agent_reasoning = true\n')
+        self.project.write_text(preferences)
+        result = self.manager.plan()
+        self.assertEqual(result["status"], "READY", result["issues"])
+        self.assertTrue(all(layer["status"] == "COMPATIBLE" for layer in result["configuration"]))
+        self.assertEqual(self.project.read_text(), preferences)
+        self.assertFalse(self.manager.directory.exists())
+
+    def test_project_policy_overrides_are_conflicts(self):
+        for text in ('default_permissions = ":workspace"', 'sandbox_mode = "workspace-write"',
+                     '[permissions.acp-development.network]\nenabled = true',
+                     'approval_policy = "never"', 'approvals_reviewer = "auto_review"',
+                     'allow_login_shell = true', '[shell_environment_policy]\ninherit = "all"'):
+            with self.subTest(text=text):
+                self.project.write_text(text)
+                result = self.manager.plan()
+                self.assertEqual(result["status"], "BLOCKED")
+                self.assertIn("PROJECT_POLICY_OVERRIDE", result["issues"])
+                self.assertEqual(result["configuration"][-1]["status"], "CONFLICT")
+                with self.assertRaisesRegex(h.Stop, "PLAN_BLOCKED"):
+                    self.manager.apply(result["plan_id"])
+                self.assertFalse(self.manager.target.exists())
+
+    def test_unknown_project_settings_are_review_required_and_redacted(self):
+        self.project.write_text('unknown_private_key_name = "synthetic-sensitive"\n')
+        result = self.manager.plan()
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("UNREVIEWED_PROJECT_KEYS", result["issues"])
+        self.assertEqual(result["configuration"][-1]["status"], "REVIEW_REQUIRED")
+        output = json.dumps(result)
+        for private in ("unknown_private_key_name", "synthetic-sensitive", str(self.project)):
+            self.assertNotIn(private, output)
+
+    def test_invalid_preferences_are_not_compatible(self):
+        for target in (self.config, self.project):
+            for text in ('model = 1', 'model_reasoning_effort = []', 'model_verbosity = "unexpected"',
+                         'hide_agent_reasoning = "true"'):
+                with self.subTest(layer=target.parent.name, text=text):
+                    target.write_text(text)
+                    result = self.manager.inspect()
+                    self.assertEqual(result["status"], "BLOCKED")
+                    self.assertIn("INVALID_PREFERENCE_VALUE", result["issues"])
+            target.write_text('model = "fixture-only"\n')
+
+    def test_managed_and_feature_settings_remain_review_required(self):
+        (self.home / "requirements.toml").write_text("# opaque managed layer\n")
+        self.project.write_text('[features]\nnetwork_proxy = true\n')
+        result = self.manager.inspect()
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertIn("REVIEW_REQUIRED_MANAGED", result["issues"])
+        self.assertIn("UNREVIEWED_PROJECT_KEYS", result["issues"])
+
+    def test_compatible_project_change_invalidates_plan(self):
+        self.project.write_text('model = "first-fixture"\n')
+        before = self.manager.plan()
+        self.assertEqual(before["status"], "READY", before["issues"])
+        self.project.write_text('model = "second-fixture"\n')
+        with self.assertRaisesRegex(h.Stop, "STALE_PLAN"):
+            self.manager.apply(before["plan_id"])
+
+
 class ProcessTests(unittest.TestCase):
+    def test_exact_0164_recipe_and_unknown_versions(self):
+        for version, supported in (("0.164.0", True), ("0.164.1", False), ("99.0.0", False)):
+            def fake(argv, *args, **kwargs):
+                if "--version" in argv:
+                    return 0, f"codex-cli {version}\n".encode(), b""
+                return 0, b"--strict-config --profile --permission-profile --cd --rules", b""
+            with self.subTest(version=version), patch.object(h, "executable_identity", return_value={}), \
+                    patch.object(h, "run", side_effect=fake):
+                _, observed, recipe = h.detect(Path("/fixture"))
+                self.assertEqual(observed, version)
+                self.assertEqual(recipe is not None, supported)
+
     def test_output_and_time_limits(self):
         with tempfile.TemporaryDirectory() as home:
             with self.assertRaisesRegex(h.Stop, "PROCESS_OUTPUT_LIMIT"):
@@ -328,22 +525,133 @@ class ProcessTests(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("CODEX_HARDENING_BINARY"), "native CLI integration is opt-in")
 class RealCliTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.binary = Path(os.environ["CODEX_HARDENING_BINARY"])
+        cls.identity, cls.version, cls.recipe = h.detect(cls.binary)
+        expected = os.environ.get("CODEX_HARDENING_EXPECTED_VERSION", "0.163.0")
+        if cls.version != expected or cls.recipe is None:
+            raise RuntimeError("expected supported native CLI version required")
+
+    @classmethod
+    def tearDownClass(cls):
+        if h.executable_identity(cls.binary) != cls.identity:
+            raise RuntimeError("native CLI changed during integration tests")
+
     def test_native_recipe_and_both_profiles(self):
         binary = Path(os.environ["CODEX_HARDENING_BINARY"])
         _, version, recipe = h.detect(binary)
-        self.assertEqual(version, "0.163.0")
+        self.assertEqual(version, self.version)
         self.assertIsNotNone(recipe)
         for mode in h.MODES:
             with self.subTest(mode=mode):
                 self.assertEqual(h.probe(binary, mode)["status"], "PASS")
 
     def test_real_lifecycle_in_temporary_home(self):
-        binary = Path(os.environ["CODEX_HARDENING_BINARY"])
-        with tempfile.TemporaryDirectory(prefix="codex-hardening-lifecycle-") as temporary:
+        self.check_lifecycle(normal_home=False)
+
+    def test_real_lifecycle_in_normal_home_layout(self):
+        self.check_lifecycle(normal_home=True)
+
+    def test_protected_metadata_directories(self):
+        self.check_protected_paths(separate_gitdir=False)
+
+    def test_git_pointer_and_separate_gitdir(self):
+        self.check_protected_paths(separate_gitdir=True)
+
+    def test_trusted_project_preferences_and_override_refusal(self):
+        if self.recipe.get("config_policy") != "preferences-v1":
+            self.skipTest("project preference support is version-specific")
+        git = shutil.which("git")
+        if git is None:
+            self.skipTest("Git is required for trusted project configuration")
+        with tempfile.TemporaryDirectory(prefix="codex-hardening-project-") as temporary:
             root = Path(temporary)
             home, work = root / "home", root / "workspace"
             home.mkdir()
             work.mkdir()
+            rc, _, _ = h.run([git, "init", "--template=", str(work)], home, root)
+            self.assertEqual(rc, 0)
+            (home / "config.toml").write_text(
+                f'[projects.{json.dumps(str(work))}]\ntrust_level = "trusted"\n')
+            project = work / ".codex" / "config.toml"
+            project.parent.mkdir()
+            preferences = ('model = "fixture-only"\nmodel_reasoning_effort = "high"\n'
+                           'model_reasoning_summary = "none"\nmodel_verbosity = "low"\n'
+                           'hide_agent_reasoning = true\n')
+            project.write_text(preferences)
+            manager = h.Manager(home, work, self.binary, "development")
+            plan = manager.plan()
+            self.assertEqual(plan["status"], "READY", plan["issues"])
+            self.assertEqual(manager.apply(plan["plan_id"])["status"], "APPLIED")
+            self.assertEqual(manager.verify()["status"], "PASS")
+            self.assertEqual(project.read_text(), preferences)
+            # Prove the native CLI actually loads this trusted project layer:
+            # invalid typed preferences must fail parsing, not be ignored.
+            project.write_text('model_verbosity = "invalid-fixture"\n')
+            rc, _, _ = h.run([str(self.binary), "sandbox", "--profile", "acp-development",
+                              "--permission-profile", "acp-development", "--cd", str(work),
+                              "--", sys.executable, "-I", "-B", "-c", "print('fixture')"], home, work)
+            self.assertNotEqual(rc, 0)
+            project.write_text('[permissions.acp-development.network]\nenabled = true\n')
+            self.assertIn("PROJECT_POLICY_OVERRIDE", manager.inspect()["issues"])
+            with patch.object(h, "probe") as probe:
+                with self.assertRaisesRegex(h.Stop, "VERIFY_PRECONDITION_FAILED"):
+                    manager.verify()
+                probe.assert_not_called()
+            manager.uninstall()
+            self.assertIn("enabled = true", project.read_text())
+
+    def check_protected_paths(self, separate_gitdir):
+        binary = Path(os.environ["CODEX_HARDENING_BINARY"])
+        with tempfile.TemporaryDirectory(prefix="codex-hardening-metadata-") as temporary:
+            root = Path(temporary)
+            home, work = root / "home", root / "workspace"
+            home.mkdir()
+            work.mkdir()
+            if separate_gitdir:
+                git = shutil.which("git")
+                if git is None:
+                    self.skipTest("Git is required for the separate-gitdir fixture")
+                # Keep the resolved gitdir INSIDE the writable workspace: an
+                # outside path would be denied even without metadata protection.
+                gitdir = work / "git-storage"
+                rc, _, _ = h.run([git, "init", "--template=", "--separate-git-dir",
+                                   str(gitdir), str(work)], home, root)
+                self.assertEqual(rc, 0, "isolated Git setup failed")
+                self.assertTrue((work / ".git").is_file())
+                targets = [gitdir / "probe-marker"]
+            else:
+                targets = []
+                for name in (".git", ".agents", ".codex", ".aws"):
+                    directory = work / name
+                    directory.mkdir()
+                    targets.append(directory / "probe-marker")
+            for mode in h.MODES:
+                (home / ("acp-" + mode + ".config.toml")).write_text(h.render_profile(mode))
+                for target in targets:
+                    with self.subTest(mode=mode, target=target.parent.name):
+                        command = [sys.executable, "-I", "-B", "-c", h.PROBE_CODE, "write", str(target)]
+                        rc, out, _ = h.run(command, home, work)
+                        self.assertEqual((rc, out), (0, b"START\nALLOWED\n"), "positive control failed")
+                        self.assertTrue(target.is_file())
+                        target.unlink()
+                        rc, out, _ = h.run([str(binary), "sandbox", "--profile", "acp-" + mode,
+                                            "--permission-profile", "acp-" + mode,
+                                            "--cd", str(work), "--", *command], home, work)
+                        self.assertEqual((rc, out), (0, b"START\nDENIED\n"))
+                        self.assertFalse(target.exists(), "denied operation created a file")
+
+    def check_lifecycle(self, normal_home):
+        binary = Path(os.environ["CODEX_HARDENING_BINARY"])
+        with tempfile.TemporaryDirectory(prefix="codex-hardening-lifecycle-") as temporary:
+            root = Path(temporary)
+            if normal_home:
+                home, work = root / "user" / ".codex", root / "user" / "projects" / "app"
+            else:
+                home, work = root / "home", root / "workspace"
+            home.mkdir(parents=True)
+            work.mkdir(parents=True)
             (home / "config.toml").write_text('model = "fixture-only"\n')
             for mode in h.MODES:
                 with self.subTest(mode=mode):

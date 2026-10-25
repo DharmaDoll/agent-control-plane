@@ -8,7 +8,7 @@ reviewed distribution data, never downloaded at runtime. It cannot contain
 commands or executable expressions. The manager implements a finite set of
 renderer/probe handlers and rejects unknown schema/handler IDs.
 
-The initial Linux x86_64 recipe targets Codex 0.163.0 and permission profiles.
+The Linux x86_64 recipes target exactly Codex 0.163.0 and 0.164.0 and permission profiles.
 Its review profile extends `:read-only`; development adds workspace writes while
 keeping `.git`, `.agents`, `.codex` and `.aws` read-only. General temporary paths
 are not writable. Both disable command networking, select on-request approvals
@@ -25,7 +25,13 @@ replacement invalidates the plan fingerprint. No broad `>=` version promises.
 The helper checks the user config, system and home managed-config locations,
 every workspace ancestor's `.codex/config.toml`/hooks/rules and user hook/rule
 files. It does not infer project trust or reproduce Codex's entire config resolver.
-Existing project/managed layers, hook/rule files, security-model settings, feature
+The selected Codex home's `config.toml` is classified as user configuration,
+not registered again as project configuration when that home is also found in
+the workspace's ancestry. This uses checked absolute paths, not symlink or
+hardlink resolution. Distinct project files and overlapping managed, hook or
+rule roles retain their existing review requirements; selecting a custom home
+does not exempt a different ancestor `.codex/config.toml`.
+For 0.163.0, existing project/managed layers, hook/rule files, security-model settings, feature
 flags, telemetry or unrecognized top-level keys block automatic application.
 This conservative superset can block a layer Codex would ignore; that is a
 review request, not an invitation to remove it. Presence-only MCP/history/log
@@ -34,6 +40,34 @@ observations are not certification of those surfaces.
 Handling those combinations later requires bounded, tested adapters. Do not add
 an `--ignore-unknown` escape hatch. Broadening supported config is a code change
 with tests, not a runtime agent interpretation or a web-derived rule injection.
+
+### 0.164.0 bounded preferences adapter
+
+The `preferences-v1` configuration policy replaces blanket project refusal only
+for these keys. It preserves every file; it neither grants project trust nor
+reproduces the effective layered configuration.
+
+| Key | Accepted value |
+| --- | --- |
+| `model`, `model_reasoning_effort` | Printable, nonempty string, at most 256 characters |
+| `model_reasoning_summary` | `auto`, `concise`, `detailed`, `none` |
+| `model_verbosity` | `low`, `medium`, `high` |
+| `hide_agent_reasoning` | Boolean |
+
+String validation does not establish model availability or model-specific effort
+support. These preferences cannot alter the local-command permission profile;
+they are not a certification of model behavior or data handling.
+
+Inspection reports redacted per-layer `configuration` entries with fixed reason
+codes and `configuration_scope: local-command-policy`. `COMPATIBLE` permits
+planning; `REVIEW_REQUIRED` and `CONFLICT` both block application. Project
+permission, approval, login-shell or shell-environment overrides produce
+`PROJECT_POLICY_OVERRIDE`; invalid preference values produce
+`INVALID_PREFERENCE_VALUE`. Unknown project keys produce
+`UNREVIEWED_PROJECT_KEYS`. Managed layers, hooks/rules and nonempty user feature
+flags remain review blockers. Do not remove those controls merely to proceed.
+All collected layers still participate in plan fingerprints and revalidation.
+The 0.163.0 adapter remains conservative; unknown versions remain unsupported.
 
 ## Updating support
 

@@ -94,9 +94,11 @@ Skillのコピーだけではhookは有効になりません。導入時に環�
 
 > codex-hardeningを使って、確認済みの計画を適用し、許可範囲内の書き込みと、対象外の書き込み・通信の拒否を検証して。復旧方法と未検証事項も報告して。
 
-初期対応はLinux x86_64のCodex CLI **0.163.0**です。**Python 3.11以上**の標準ライブラリだけを使い、追加パッケージや専用Python環境は不要です。既存の3.11以上がなければ停止し、自動インストールはしません。WSL2は導入先で検証し、macOS・Windows・他の版を対応済みとは扱いません。
+対応版はLinux x86_64のCodex CLI **0.163.0・0.164.0**です。**Python 3.11以上**の標準ライブラリだけを使い、追加パッケージや専用Python環境は不要です。既存の3.11以上がなければ停止し、自動インストールはしません。WSL2は導入先で検証し、macOS・Windows・他の版を対応済みとは扱いません。
 
 更新に追従するため、安全方針と[互換性定義・更新手順](skills/codex-hardening/references/compatibility.md)を分離しています。未知の版や設定の競合では診断結果を返して適用を停止します。Codexや関連設定が変わったら再検証しますが、Codex本体の更新や常時監視は行いません。既存のproject設定・管理ポリシー・許可ルールなどがある環境は、初期版では追加レビューが必要になる場合があります。
+
+0.164.0では、モデル・応答表示など5項目に限ってproject設定を保持したまま検査できます。権限の上書きや未検証の設定は引き続き停止します。開発用プロファイルも一般の一時領域への書き込みは許可していません。Goなどはタスク単位でworkspace内にキャッシュ・一時領域を明示する必要があり、詳しい実測結果は[検証記録](skills/codex-hardening/evals/validation.md)にまとめています。
 
 profileは`<codex-home>/acp-review.config.toml`または`acp-development.config.toml`に配置され、新しいセッションで明示的に選択します。検証には一時ファイルとローカル接続を使い、モデルや外部サービスを呼びません。sandboxの起動失敗は拒否成功に数えません。Web・MCP・承認UI・ログ保存の安全性や秘密情報の読み取り防止は別の確認事項です。[操作・復旧手順](skills/codex-hardening/references/operations.md)と[制限事項](skills/codex-hardening/references/limitations.md)を参照してください。
 

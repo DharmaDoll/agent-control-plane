@@ -26,7 +26,7 @@ model calls, credential reads, downloads, or daemon installation are needed.
    `READY` means this narrow recipe can be evaluated, not that the environment is
    secure. Other surfaces remain `NOT_VERIFIED`.
 
-The current recipe supports exactly 0.163.0 on Linux x86_64. Unknown versions can
+The recipes support exactly 0.163.0 and 0.164.0 on Linux x86_64. Unknown versions can
 be inspected, but cannot be applied. Read [compatibility.md](references/compatibility.md)
 when a version, command interface, config layer or policy model has changed.
 Never turn an unrecognized setting into an assumed safe default.
@@ -52,6 +52,13 @@ permission settings or feature flags may require additional compatibility work.
 Do not delete them, change trust levels, switch homes, or silently use another
 policy model to make this helper pass. This initial implementation deliberately
 stops where it cannot establish the necessary configuration boundaries.
+
+For 0.164.0, five bounded project preference keys can be preserved without
+blocking the local-command policy. Explain `configuration` classifications:
+`COMPATIBLE` is narrow policy eligibility, `REVIEW_REQUIRED` is unverified,
+and `CONFLICT` is an incompatible policy or invalid preference. Both latter
+states block apply. Consult compatibility.md before interpreting the result;
+none certifies model behavior, MCP, or confidentiality.
 
 ## Verify and report
 

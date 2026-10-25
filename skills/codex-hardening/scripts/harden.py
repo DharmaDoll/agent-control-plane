@@ -39,6 +39,12 @@ KNOWN_KEYS = {
     "mcp_oauth_credentials_store", "mcp_servers", "otel", "log_dir",
     "memories", "features", "permissions", "default_permissions",
 }
+PREFERENCE_KEYS = {"model", "model_reasoning_effort", "model_reasoning_summary",
+                   "model_verbosity", "hide_agent_reasoning"}
+PERMISSION_KEYS = {"sandbox_mode", "sandbox_workspace_write", "permissions", "default_permissions"}
+PROJECT_POLICY_KEYS = PERMISSION_KEYS | {"approval_policy", "approvals_reviewer",
+                                         "allow_login_shell", "shell_environment_policy"}
+CONFIG_CONFLICTS = {"PERMISSION_MODEL_CONFLICT", "PROJECT_POLICY_OVERRIDE", "INVALID_PREFERENCE_VALUE"}
 
 
 class Stop(Exception):
@@ -100,6 +106,46 @@ def load_json(path):
         return json.loads(data)
     except (ValueError, RecursionError):
         raise Stop("INVALID_JSON") from None
+
+
+def configuration_issues(config, kind, policy):
+    """Classify a bounded parsed layer; return only fixed reason codes."""
+    issues = []
+    if kind == "project":
+        if set(config) & PROJECT_POLICY_KEYS:
+            issues.append("PROJECT_POLICY_OVERRIDE")
+        if set(config) - PREFERENCE_KEYS - PROJECT_POLICY_KEYS:
+            issues.append("UNREVIEWED_PROJECT_KEYS")
+    else:
+        if set(config) - KNOWN_KEYS:
+            issues.append("UNREVIEWED_CONFIG_KEYS")
+        if set(config) & PERMISSION_KEYS:
+            issues.append("PERMISSION_MODEL_CONFLICT")
+        if config.get("features"):
+            issues.append("FEATURE_FLAGS_REQUIRE_REVIEW")
+        if config.get("otel"):
+            issues.append("TELEMETRY_REQUIRES_REVIEW")
+        projects = config.get("projects", {})
+        if not isinstance(projects, dict) or any(
+            not isinstance(value, dict) or set(value) != {"trust_level"}
+            or value["trust_level"] not in ("trusted", "untrusted")
+            for value in projects.values()
+        ):
+            issues.append("PROJECT_SETTINGS_REQUIRE_REVIEW")
+    if policy == "preferences-v1":
+        enums = {"model_reasoning_summary": ("auto", "concise", "detailed", "none"),
+                 "model_verbosity": ("low", "medium", "high")}
+        for key in PREFERENCE_KEYS & set(config):
+            value = config[key]
+            if key == "hide_agent_reasoning":
+                valid = type(value) is bool
+            elif key in enums:
+                valid = type(value) is str and value in enums[key]
+            else:
+                valid = type(value) is str and 0 < len(value) <= 256 and value.isprintable()
+            if not valid:
+                issues.append("INVALID_PREFERENCE_VALUE")
+    return sorted(set(issues))
 
 
 def render_profile(mode):
@@ -200,6 +246,8 @@ def detect(binary):
         if recipe:
             if recipe["renderer"] != "permissions-v1" or recipe["probe"] != "sandbox-permissions-v1":
                 raise Stop("RECIPE_HANDLER_UNSUPPORTED")
+            if recipe.get("config_policy", "conservative-v1") not in ("conservative-v1", "preferences-v1"):
+                raise Stop("RECIPE_HANDLER_UNSUPPORTED")
             commands = {"root": ["--help"], "sandbox": ["sandbox", "--help"],
                         "rules": ["execpolicy", "check", "--help"]}
             for key, markers in recipe["required_help"].items():
@@ -226,13 +274,19 @@ class Manager:
     def layers(self):
         # Conservative superset: inspect every ancestor instead of guessing the
         # repo/trust boundary. System/managed layers need a separate adapter.
-        paths = [(self.home / "config.toml", "user")]
+        user_config = self.home / "config.toml"
+        paths = [(user_config, "user")]
         for name in ("config.toml", "requirements.toml", "managed_config.toml"):
             paths.append((Path("/etc/codex") / name, "managed"))
         for name in ("requirements.toml", "managed_config.toml"):
             paths.append((self.home / name, "managed"))
         for parent in reversed((self.workspace, *self.workspace.parents)):
-            paths.append((parent / ".codex" / "config.toml", "project"))
+            project_config = parent / ".codex" / "config.toml"
+            # Checked absolute paths identify the selected user config, even
+            # when the workspace is beneath HOME. Do not reclassify it as a
+            # project layer, resolve aliases, or suppress other managed roles.
+            if project_config != user_config:
+                paths.append((project_config, "project"))
             paths.append((parent / ".codex" / "hooks.json", "hooks"))
         paths.append((self.home / "hooks.json", "hooks"))
         for base in [self.home, *(p / ".codex" for p in (self.workspace, *self.workspace.parents))]:
@@ -245,12 +299,13 @@ class Manager:
                     raise Stop("INPUT_LIMIT")
                 for item in sorted(entries):
                     paths.append((item, "rules"))
-        # Deduplicate overlapping home/workspace layers.
+        # Identical hook/rule roles can also overlap home/workspace traversal.
         return list(dict.fromkeys(paths))
 
     def inspect(self):
         identity, version, recipe = detect(self.binary)
-        issues, fingerprints, observations = [], {}, {}
+        issues, fingerprints, observations, classifications = [], {}, {}, []
+        policy = recipe.get("config_policy", "conservative-v1") if recipe else "conservative-v1"
         if not recipe:
             issues.append("UNSUPPORTED_VERSION_OR_PLATFORM")
         layers = self.layers()
@@ -265,27 +320,18 @@ class Manager:
             fingerprints[str(path)] = None if data is None else digest(data)
             if data is None:
                 continue
-            if kind in ("managed", "project", "hooks", "rules"):
+            if kind in ("managed", "hooks", "rules") or (kind == "project" and policy != "preferences-v1"):
                 # Do not evaluate arbitrary rule text or start project hooks.
-                issues.append("REVIEW_REQUIRED_" + kind.upper())
+                layer_issues = ["REVIEW_REQUIRED_" + kind.upper()]
+            else:
+                config = parse_toml(data)
+                layer_issues = configuration_issues(config, kind, policy)
+            status = ("CONFLICT" if CONFIG_CONFLICTS & set(layer_issues) else
+                      "REVIEW_REQUIRED" if layer_issues else "COMPATIBLE")
+            classifications.append({"layer": kind, "status": status, "reasons": layer_issues})
+            issues.extend(layer_issues)
+            if kind != "user":
                 continue
-            config = parse_toml(data)
-            if set(config) - KNOWN_KEYS:
-                issues.append("UNREVIEWED_CONFIG_KEYS")
-            if any(key in config for key in ("sandbox_mode", "sandbox_workspace_write",
-                                              "permissions", "default_permissions")):
-                issues.append("PERMISSION_MODEL_CONFLICT")
-            if config.get("features"):
-                issues.append("FEATURE_FLAGS_REQUIRE_REVIEW")
-            if config.get("otel"):
-                issues.append("TELEMETRY_REQUIRES_REVIEW")
-            projects = config.get("projects", {})
-            if not isinstance(projects, dict) or any(
-                not isinstance(value, dict) or set(value) != {"trust_level"}
-                or value["trust_level"] not in ("trusted", "untrusted")
-                for value in projects.values()
-            ):
-                issues.append("PROJECT_SETTINGS_REQUIRE_REVIEW")
             # All counts / enums, never user-supplied names, URLs or values.
             for key in ("mcp_servers", "otel", "memories", "shell_environment_policy", "log_dir"):
                 observations[key] = "configured" if key in config else "not_explicit"
@@ -328,6 +374,7 @@ class Manager:
         return {"status": "READY" if not issues else "BLOCKED",
                 "version": version, "recipe": recipe["id"] if recipe else None,
                 "issues": sorted(set(issues)), "observations": observations,
+                "configuration": classifications, "configuration_scope": "local-command-policy",
                 "fingerprint": digest(encoded(internal)), "profile": self.name,
                 "runtime": "NOT_VERIFIED", "other_surfaces": "NOT_VERIFIED"}
 
