@@ -87,21 +87,113 @@ paths:
 
 Skillのコピーだけではhookは有効になりません。導入時に環境を診断し、既存hookや共有worktreeがある場合は統合方法を検討します。通常のcommit・pushでは、Git標準hookが検査を呼び出します。導入・更新・切り戻し・解除・cleanupの具体的な操作は[導入手順](skills/secret-checks/references/installation.md)、検査範囲と適用できない条件は[制限事項](skills/secret-checks/references/limitations.md)にあります。
 
-### Codex CLIの実行環境を整える
+### codex-hardening クイックスタート
 
 `codex-hardening`は、Codex CLIのバージョン・設定の競合を確認し、調査用／通常開発用の専用profileを管理します。既存の`config.toml`、認証、MCP、履歴は書き換えません。Skillを配置しただけでは設定は有効になりません。
 
-> codex-hardeningを使って、この環境のCodex CLIと設定を診断し、通常開発用profileの変更案を提示して。まだ適用・認証変更・履歴削除はしないで。
+参考にした[Codex CLI Hardening Cheatsheet](https://github.com/okdt/codex-cli-hardening-cheatsheet)の最小権限・人間の承認・実動作検証の方針を取り入れていますが、全設定の一括適用ではありません。keyringへの移行、Web検索、環境変数の継承、MCPの許可リスト、履歴・メモリの設定は変更しません。[対応範囲の比較](skills/codex-hardening/references/limitations.md#relationship-to-the-upstream-cheatsheet-checked-2026-11-03)を参照してください。
+
+最初にprofileを手書きする必要はありません。組み込みのプリセットから用途を選び、環境に合わせて生成します。
+
+#### profileの実体・保存先・名前
+
+profileは名前を付けた設定のまとまりで、このSkillでは**専用のTOMLファイル**として保存します。`acp-development`はファイルパスではなく、起動時に指定するprofile名です。
+
+| Skillで選ぶmode | 生成されるprofile名 | 保存先 |
+| --- | --- | --- |
+| `review` | `acp-review` | `<codex-home>/acp-review.config.toml` |
+| `development` | `acp-development` | `<codex-home>/acp-development.config.toml` |
+
+`<codex-home>`は、診断時に確認して管理scriptの`--codex-home`へ渡すCodexの設定ディレクトリです。例えば、それが`/home/user/.codex`なら、開発用の保存先は`/home/user/.codex/acp-development.config.toml`です。Skillの配置先である`.agents/skills/codex-hardening/`や、対象リポジトリ内に保存するという意味ではありません。OSのホームを指定する`--user-home`とも区別します。
+
+**このSkillではprofile名は固定で、任意の文字列を指定する機能はありません。** 管理scriptに`--mode development`を渡すと、名前・保存先・ファイル内の権限定義を自動生成します。利用者が`config.toml`へ名前を登録したり、生成済みファイルを手で改名したりする必要はありません。生成は承認後の`apply`で行い、`inspect`や`plan`では保存しません。
+
+#### PC上で追加・変更されるもの
+
+例えばCodex homeが`~/.codex`で、開発用を選ぶ場合、承認後に次を管理します。
+
+| ファイル・ディレクトリ | 役割 |
+| --- | --- |
+| `~/.codex/acp-development.config.toml` | 専用の権限設定。初回は追加、設定変更時はこの管理対象だけを更新 |
+| `~/.codex/codex-hardening-state/` | 変更前後の生成設定、処理中の記録、排他ロック。復旧と変更検知に使用 |
+| `~/.codex/rules/acp-hardening.rules` | 別途承認した場合だけ追加するコマンド制御。profile単位ではなく、このCodex home全体に影響 |
+
+開発用profileでは、workspace内の編集を許可し、`.git`・`.agents`・`.codex`・`.aws`への書き込みを制限します。既定の認証情報パスへの読み書きと、Sandbox内コマンドのネットワーク通信を禁止し、承認が必要な操作は人間の判断に委ねる設定です。ログインシェルの使用も無効にします。読み取りをworkspace内だけに限定する設定ではありません。
+
+別途導入するコマンドルールは、`sudo`の禁止、`rm`の承認要求、ルートやホームを対象とする一部の再帰削除形式の禁止です。あらゆる削除手段を防ぐものではありません。
+
+既存の`config.toml`、Plugin、MCP、認証情報そのものやOSのファイル権限は変更しません。常駐監視ソフトも追加しません。profileは新しいCodexセッションで`codex --profile acp-development --cd /absolute/repository`と選択して使い、現在のセッションや通常起動の既定値を自動変更しません。
+
+戻したい場合は管理scriptの`rollback`で前の生成設定へ戻し、`uninstall`でこのSkillの管理対象を取り除きます。profileと共通コマンドルールは別々に扱います。利用者が後から編集したファイルは勝手に上書きせず停止します。復旧後は新しいセッションで設定を読み直してください。設定の復旧は、既に起きた情報送信やファイル削除を取り消すものではありません。具体的な引数は[復旧手順](skills/codex-hardening/references/operations.md#recovery)を参照してください。
+
+#### 1. 用途を選び、診断・計画を依頼する
+
+| 用途 | 選ぶプリセット | 主な制限 |
+| --- | --- | --- |
+| 調査・レビュー | `review` | workspaceへの書き込み不可、コマンドの通信不可 |
+| コード編集・ローカルテスト | `development` | workspaceは編集可能。保護対象のメタデータ、一般の一時領域への書き込み、コマンドの通信は制限 |
+
+> codex-hardeningを使って、この環境を診断し、用途別プリセットを提示して。制限と変更内容を確認してから選びたい。まだ適用しないで。
+
+用途が決まっていれば「開発用プリセットで計画して」と指定できます。通常は選んだ1種類だけを導入し、両方必要なら個別に計画・承認・検証します。どちらもクレデンシャル保護は既定で有効です。依存取得やpushなどが無条件に通る設定ではありません。
+
+#### 2. 内容を確認して適用・検証する
+
+診断が`BLOCKED`なら、適用へ進まず、表示された`review_details`と`next_steps`で互換性の確認対象を調べます。既知の設定項目名だけを表示し、値・plugin名・未知のキー名は公開しません。未知の項目は件数で示すため、必要なら手元で確認してください。既存設定を消して通すのではなく、対応可否を検証します。
+
+`BLOCKED`でも設定案は参考表示されますが、`applicable: false`・`candidate_status: REFERENCE_ONLY`・`plan_id: null`となり、そのまま適用する計画ではありません。`READY`の計画を確認してから、次の依頼へ進みます。
 
 > codex-hardeningを使って、確認済みの計画を適用し、許可範囲内の書き込みと、対象外の書き込み・通信の拒否を検証して。復旧方法と未検証事項も報告して。
 
-対応版はLinux x86_64のCodex CLI **0.163.0・0.164.0**です。**Python 3.11以上**の標準ライブラリだけを使い、追加パッケージや専用Python環境は不要です。既存の3.11以上がなければ停止し、自動インストールはしません。WSL2は導入先で検証し、macOS・Windows・他の版を対応済みとは扱いません。
+#### 3. 新しいセッションでprofileを選ぶ
+
+開発用の場合は、ターミナルから次のように起動します。`--profile`は既に生成したprofileの選択であり、新規作成や名前の設定ではありません。
+
+```sh
+codex --profile acp-development --cd /absolute/repository
+```
+
+導入後は、対象workspaceで選択先を再検証し、新しいセッションで `codex --profile acp-review --cd /absolute/repository` または `codex --profile acp-development --cd /absolute/repository` を指定します。既存セッションやグローバルの既定設定は変わりません。保護の例外を変更する場合は、そのprofileを再計画・承認・適用・検証します。他のPCの生成済みprofileはコピーせず、移行先で生成してください。共通のコマンド制御（`command-rules`）は別承認で、profileの切替では解除されません。
+
+起動に使うCodexのインストールとCodex homeは、診断・検証したものに揃えてください。別のhomeや起動時の権限上書きを使う場合、同じ検証結果は流用できません。
+
+#### 変更・切替・元に戻す
+
+生成ファイルを直接編集せず、Skillに変更を依頼してください。管理対象ファイルの手動変更は不整合として停止する場合があります。
+
+調査用へ切り替える：
+
+> codex-hardeningを使って、このworkspaceでreviewプリセットを使いたい。未導入なら計画を作り、導入済みなら承認済みの例外を維持して再検証して。起動コマンドも提示して。
+
+保護の例外を変更する：
+
+> developmentのAWSパス保護だけを解除する計画を作って。他の保護は維持し、影響を説明して。まだ適用しないで。
+
+例外は承認後に再適用・検証します。管理scriptでは`--disable-protection aws`などを使い、plan・apply・verifyに意図した例外の全リストを指定します。パス保護を解除しても、通信やクラウド側の操作権限まで許可されるわけではありません。
+
+前の状態へ戻す／削除する：
+
+> developmentの管理対象設定を前の状態に戻して。復旧後の検証状態も報告して。
+
+> developmentの管理対象profileをアンインストールして。共通のコマンド制御は残して。
+
+復旧には残っている管理記録を使います。profileと共通ルールは別管理で、片方の削除で他方は削除されません。具体的なCLI引数・保存される管理記録・cleanupは[操作・復旧手順](skills/codex-hardening/references/operations.md)を参照してください。
+
+#### 対応環境と保護の範囲
+
+デフォルト保護はLinux x86_64のCodex CLI **0.165.0・0.166.0**を対象とします。0.163.0・0.164.0の識別定義は残しますが、新しい保護を再検証するまで適用・検証は停止します。**Python 3.11以上**の標準ライブラリだけを使い、追加パッケージや専用Python環境は不要です。既存の3.11以上がなければ停止し、自動インストールはしません。WSL2は導入先で検証し、macOS・Windows・他の版を対応済みとは扱いません。
+
+0.166.0では、`features.fast_mode`と一部の`tui`・`notice`設定を、型・件数・長さを検査したうえで保持できます。pluginの`enabled`とmarketplaceの既知メタデータも、存在だけでは停止しません。これらの実行・配布元の安全性は未検証として表示します。未知の権限項目・不正な型・権限競合は引き続き停止します。`tui.resume_cwd = "session"`も維持しますが、検証結果は指定workspace/profileを使う新規セッション向けであり、再開先には自動で引き継ぎません。詳しい[対応項目と理由](skills/codex-hardening/references/compatibility.md)を参照してください。既存設定を削除・無効化して通す処理は行いません。
 
 更新に追従するため、安全方針と[互換性定義・更新手順](skills/codex-hardening/references/compatibility.md)を分離しています。未知の版や設定の競合では診断結果を返して適用を停止します。Codexや関連設定が変わったら再検証しますが、Codex本体の更新や常時監視は行いません。既存のproject設定・管理ポリシー・許可ルールなどがある環境は、初期版では追加レビューが必要になる場合があります。
 
 0.164.0では、モデル・応答表示など5項目に限ってproject設定を保持したまま検査できます。権限の上書きや未検証の設定は引き続き停止します。開発用プロファイルも一般の一時領域への書き込みは許可していません。Goなどはタスク単位でworkspace内にキャッシュ・一時領域を明示する必要があり、詳しい実測結果は[検証記録](skills/codex-hardening/evals/validation.md)にまとめています。
 
 profileは`<codex-home>/acp-review.config.toml`または`acp-development.config.toml`に配置され、新しいセッションで明示的に選択します。検証には一時ファイルとローカル接続を使い、モデルや外部サービスを呼びません。sandboxの起動失敗は拒否成功に数えません。Web・MCP・承認UI・ログ保存の安全性や秘密情報の読み取り防止は別の確認事項です。[操作・復旧手順](skills/codex-hardening/references/operations.md)と[制限事項](skills/codex-hardening/references/limitations.md)を参照してください。
+
+認証情報の既知パスはデフォルトで読み書きを拒否します。AWS・Google Cloud・Azure・OCI・Kubernetesのほか、SSH、Docker、Terraform、Pulumi、Vault、GitHub/GitLabなど**21グループ・26パス**が対象です。認証情報の中身は読みません。`--user-home`でOSのホームを明示し、例外が必要なら利用者の承認を得て`--disable-protection aws`などを指定します。別の保存先・環境変数・OSの資格情報ストアまで保護するものではありません。
+
+コマンド制御は別の`--mode command-rules`で管理します。`sudo`をdeny、`rm`をask、代表的なルート・ホーム削除をdenyとするルールを生成します。このrulesファイルは**同じCodex homeを使う他のセッションにも影響**するため、プロファイルとは別に計画・承認・適用します。既存rulesは上書きせず、対応するリテラル構文とCodex自身の判定を検証します。任意の削除処理を防ぐ保証や、すべての実行で確認画面が出る保証ではありません。[対象パス・opt-out・適用範囲](skills/codex-hardening/references/default-protections.md)を確認してください。
 
 ### Claude Code版のhardening
 

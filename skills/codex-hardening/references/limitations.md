@@ -18,14 +18,16 @@ Codex/OS sandboxing provides enforcement; this skill does not implement a sandbo
 - Filesystem checks, single-writer locking and pre/post fingerprints address
   accidental drift and cooperative concurrency, not hostile same-UID races.
   Uncooperative editors must not edit managed paths during an operation.
-- The profiles retain broad read access. They do not prevent reading local
-  credentials into model context. Keep secrets out of accessible workspaces or
-  use independently enforced read boundaries and external credential brokers.
+- The profiles retain broad read access except for the default credential
+  catalogue. Copies, alternate paths, environment secrets, keyrings and approved
+  sandbox escapes can remain accessible. This is not complete confidentiality;
+  keep independent credential boundaries and external brokers.
 - Writes inside a development workspace can change executable code, scripts and
   dependency hooks. Narrow writable roots do not make all allowed writes safe.
 - On-request does not prompt for every command. Existing permits, CLI overrides,
   approved escalations and later session changes can change behavior. The current
-  automatic workflow blocks existing rule files rather than certify them.
+  workflow accepts only a bounded literal-rule subset and native validation;
+  it reports existing allows rather than certifying their safety.
 - Shell/network sandboxing is not a global communications policy. Web search,
   MCP/connectors, browser/computer tools, model API traffic and telemetry have
   separate paths. The loopback test and disabled network setting do not prove
@@ -33,6 +35,11 @@ Codex/OS sandboxing provides enforcement; this skill does not implement a sandbo
 - MCP configuration is observed, not activated/tested or rewritten. No remote
   tool, account or external service is contacted. Auth storage changes require
   their own review; no token value is read or migrated.
+- Compatible plugin activation/marketplace metadata is preserved, not audited.
+  Plugin code, updates and external tools are outside the local-command evidence.
+  Source strings are never fetched by inspection. These are scope warnings, not
+  blanket reasons to refuse a recoverable profile change. Unknown authority fields
+  still require a tested adapter. Resumed sessions need their own validation.
 - History, session state, memories and logs are separate retention surfaces.
   `history.persistence = "none"` is not a promise that nothing remains. This
   manager only reports selected config observations and never deletes history.
@@ -49,6 +56,28 @@ for OS isolation or an enterprise policy enforcement system. Unknown conditions
 stop application rather than silently weaken configuration.
 
 ## Source acknowledgement
+
+### Relationship to the upstream cheatsheet (checked 2026-11-03)
+
+This is a selective implementation, not the upstream Quick Start installed in
+full. The following mapping prevents an accidental claim of complete coverage.
+
+| Upstream topic | This manager's treatment |
+| --- | --- |
+| Least privilege, human approvals, command networking | Implemented in two explicit profiles using the tested permission model |
+| Temporary writes and login shells | Restricted; no general temporary-directory grant |
+| Profile selection and real sandbox checks | Implemented, with fingerprinted plans and recovery added |
+| Web search policy | Observed, not changed |
+| OS keyring authentication storage | Observed, not migrated |
+| Shell environment filtering | Observed; clean probe environment is not live-agent filtering |
+| MCP tool allowlists | Not configured or enforced here |
+| History, memories and logs | Selected observations only; no retention changes or deletion |
+| Organization requirements and network-enabled presets | Not installed |
+
+Credential-path denies and optional home-wide command rules are additional local
+controls, not substitutes for keyring storage or MCP authorization. Review mode
+retains on-request human approvals; it is not the upstream never-approval preset.
+No change to these external surfaces is authorized by ordinary profile setup.
 
 The motivation includes okdt's
 [Codex CLI Hardening Cheatsheet](https://github.com/okdt/codex-cli-hardening-cheatsheet)

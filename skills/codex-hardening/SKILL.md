@@ -26,19 +26,38 @@ model calls, credential reads, downloads, or daemon installation are needed.
    `READY` means this narrow recipe can be evaluated, not that the environment is
    secure. Other surfaces remain `NOT_VERIFIED`.
 
-The recipes support exactly 0.163.0 and 0.164.0 on Linux x86_64. Unknown versions can
-be inspected, but cannot be applied. Read [compatibility.md](references/compatibility.md)
+Default protections have exact 0.165.0/0.166.0 recipes on Linux x86_64. Historical
+0.163.0/0.164.0 recipes remain identifiable, but new apply/verify stops until
+these protections are tested there. Unknown versions can be inspected, but
+cannot be applied. Read [compatibility.md](references/compatibility.md)
 when a version, command interface, config layer or policy model has changed.
 Never turn an unrecognized setting into an assumed safe default.
 
 ## Plan and apply authorized changes
 
-Use `plan` to generate a candidate and plan ID. Offer `review` (read-only) or
-`development` (workspace writes); both disable sandboxed command networking and
+Start with scene selection, not a request to design a profile. Read
+[operations.md](references/operations.md#choose-a-scene) for the two built-in
+presets, first-time setup and later switching. Recommend `development` for code
+changes and `review` for investigation. If the requested scene is already clear,
+use it without asking again. Otherwise present both choices and their limits.
+Users do not need to create a profile manually before using this skill.
+
+Use `plan` to instantiate the selected preset and obtain a plan ID. Templates
+are built into the manager; do not invent TOML or copy another machine's finished
+profile. Both modes disable sandboxed command networking and
 request human rather than automatic review for approval-requiring operations.
 The permission profile does not grant writes to general temporary directories;
 some tools need an explicitly reviewed alternative. Existing secrets/history/MCP
 settings are not rewritten. Read [limitations.md](references/limitations.md).
+
+Read [default-protections.md](references/default-protections.md) before setup or
+exceptions. Propose credential-denying profiles and separate `command-rules`
+(sudo forbidden, rm prompt, selected root/home removal prefixes forbidden).
+Explain that rules affect the entire Codex home; obtain scope-specific approval.
+Require explicit OS `--user-home`, distinct from `--codex-home`, without reading
+credential contents. Keep protections enabled unless the human approves named
+`--disable-protection` exceptions. Explain affected CLI use first; never opt out
+or retry unsandboxed merely to make an operation succeed.
 
 Apply only after the user accepts the target and changes. Use `apply --plan-id`
 from the reviewed plan. The manager rechecks fingerprints, tests the candidate
@@ -47,7 +66,15 @@ management state. It does not activate a profile in existing sessions, rewrite
 base config, or make the profile the global default. A stale plan requires a new
 plan, not a force option.
 
-Existing managed policies, project configs/hooks/rules, user rule files,
+Create only the selected preset by default. If the user requests both, plan,
+approve, apply and verify each separately; report partial completion explicitly.
+Choosing a preset is not approval to install the home-wide command rules. When
+switching to an already installed preset, verify it for the intended workspace
+and show a new-session invocation; do not regenerate it or silently drop existing
+exceptions. If the requested exceptions are unknown, establish them before
+planning or verification. Changing exceptions requires a fresh approved plan.
+
+Existing managed policies, project configs/hooks, unsupported rule syntax,
 permission settings or feature flags may require additional compatibility work.
 Do not delete them, change trust levels, switch homes, or silently use another
 policy model to make this helper pass. This initial implementation deliberately
@@ -59,6 +86,17 @@ blocking the local-command policy. Explain `configuration` classifications:
 and `CONFLICT` is an incompatible policy or invalid preference. Both latter
 states block apply. Consult compatibility.md before interpreting the result;
 none certifies model behavior, MCP, or confidentiality.
+For 0.165.0, literal prefix rules can coexist after native validation. Review
+`existing_rule_allow_count`/`rule_warning`: existing allows may bypass filesystem
+protections. Preserve those files; syntax validation does not authorize grants.
+The 0.166.0 recipe additionally preserves a bounded set of user display/speed
+preferences. Consult compatibility.md for exact fields and limits; do not treat
+an entire tui/features table as safe. Bounded plugin enablement/marketplace
+metadata can coexist without a separate plugin approval. Unknown policy fields
+and invalid metadata still block. Explain `scope_warnings` before ordinary plan
+approval: plugin execution/sources are NOT_VERIFIED, and resumed workspaces cannot
+inherit new-session evidence. Preserve existing configuration; never fetch or
+execute a plugin as part of this compatibility check.
 
 ## Verify and report
 

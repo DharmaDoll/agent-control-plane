@@ -51,7 +51,7 @@ class LifecycleTests(unittest.TestCase):
         self.work.mkdir()
         self.manager = h.Manager(self.home, self.work, Path(sys.executable).resolve(), "development")
         self.detect = patch.object(h, "detect", return_value=(
-            {"path": "fixture", "sha256": "a" * 64}, "0.163.0", {"id": "fixture"}))
+            {"path": "fixture", "sha256": "a" * 64}, "0.163.0", {"id": "fixture", "protections": "default-v1"}))
         self.detect.start()
         self.addCleanup(self.detect.stop)
         # Isolate tests from the host's managed and ancestor configuration.
@@ -61,6 +61,9 @@ class LifecycleTests(unittest.TestCase):
         self.probe = patch.object(h, "probe", return_value={"status": "PASS", "checks": {"fixture": "PASS"}})
         self.probe.start()
         self.addCleanup(self.probe.stop)
+        credential_probe = patch.object(h, "credential_probe", return_value={"status": "PASS"})
+        credential_probe.start()
+        self.addCleanup(credential_probe.stop)
 
     def apply(self):
         return self.manager.apply(self.manager.plan()["plan_id"])
@@ -100,7 +103,7 @@ class LifecycleTests(unittest.TestCase):
         self.manager.rollback()
         self.assertFalse(self.manager.target.exists())
         self.manager.rollback()
-        self.assertEqual(self.manager.target.read_text(), h.render_profile("development"))
+        self.assertEqual(self.manager.target.read_text(), self.manager.candidate())
 
     def test_plan_stale_after_config_change(self):
         plan = self.manager.plan()
@@ -111,7 +114,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_plan_stale_after_binary_change(self):
         plan = self.manager.plan()
-        with patch.object(h, "detect", return_value=({"sha256": "b" * 64}, "0.163.0", {"id": "fixture"})):
+        with patch.object(h, "detect", return_value=({"sha256": "b" * 64}, "0.163.0", {"id": "fixture", "protections": "default-v1"})):
             with self.assertRaisesRegex(h.Stop, "STALE_PLAN"):
                 self.manager.apply(plan["plan_id"])
 
@@ -121,7 +124,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(self.manager.target.exists())
 
     def test_config_drift_during_probes(self):
-        def modify(*args):
+        def modify(*args, **kwargs):
             (self.home / "config.toml").write_text('model = "changed"')
             return {"status": "PASS"}
         with patch.object(h, "probe", side_effect=modify):
@@ -145,7 +148,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.manager.target.read_text(), "# manual edit")
 
     def test_existing_unmanaged_profile_is_not_adopted(self):
-        self.manager.target.write_text(h.render_profile("development"))
+        self.manager.target.write_text(self.manager.candidate())
         with self.assertRaisesRegex(h.Stop, "PLAN_BLOCKED"):
             self.apply()
 
@@ -199,6 +202,44 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotIn("private", output)
         self.assertNotIn(str(self.home), output)
         self.assertEqual(self.manager.inspect()["observations"]["mcp_servers"], "configured")
+
+    def test_blocked_plan_is_reference_only_with_safe_review_details(self):
+        original = ('"synthetic-private-key-name" = "synthetic-private-value"\n'
+                    '[plugins.private_plugin]\nenabled = true\n'
+                    '[tui]\nnotifications = true\n'
+                    '[features]\nfast_mode = true\nprivate_feature = true\n')
+        config = self.home / "config.toml"
+        config.write_text(original)
+        report = self.manager.plan()
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertFalse(report["applicable"])
+        self.assertIsNone(report["plan_id"])
+        self.assertEqual(report["candidate_status"], "REFERENCE_ONLY")
+        details = report["configuration"][0]["review_details"]
+        self.assertEqual(details["recognized_unreviewed_keys"], ["plugins", "tui"])
+        self.assertEqual(details["unknown_key_count"], 1)
+        self.assertEqual(details["recognized_features"], ["fast_mode"])
+        self.assertEqual(details["unknown_feature_count"], 1)
+        self.assertTrue(report["next_steps"])
+        output = json.dumps(report)
+        for private in ("synthetic-private", "private_plugin", "private_feature"):
+            self.assertNotIn(private, output)
+        self.assertEqual(config.read_text(), original)
+        self.assertFalse(self.manager.target.exists())
+        self.assertFalse(self.manager.directory.exists())
+
+    def test_ready_plan_remains_applicable(self):
+        report = self.manager.plan()
+        self.assertTrue(report["applicable"])
+        self.assertEqual(report["candidate_status"], "REQUIRES_APPROVAL")
+        self.assertEqual(len(report["plan_id"]), 64)
+
+    def test_invalid_feature_shape_has_no_raw_diagnostics(self):
+        (self.home / "config.toml").write_text('features = "private-feature-value"')
+        report = self.manager.plan()
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertEqual(report["configuration"][0]["review_details"]["feature_shape"], "INVALID")
+        self.assertNotIn("private-feature-value", json.dumps(report))
 
     def test_malformed_toml_is_sanitized(self):
         (self.home / "config.toml").write_text('malformed = "synthetic-sensitive')
@@ -301,7 +342,7 @@ class ConfigFixture(unittest.TestCase):
         self.config.write_text('model = "fixture-only"\n')
         self.manager = h.Manager(self.home, self.work, Path(sys.executable).resolve(), "development")
         detection = patch.object(h, "detect", return_value=(
-            {"path": "fixture", "sha256": "a" * 64}, "0.163.0", {"id": "fixture"}))
+            {"path": "fixture", "sha256": "a" * 64}, "0.163.0", {"id": "fixture", "protections": "default-v1"}))
         detection.start()
         self.addCleanup(detection.stop)
         original_read = h.read_file
@@ -331,7 +372,9 @@ class ConfigLayerTests(ConfigFixture):
         custom_home = self.root / "custom-codex"
         custom_home.mkdir()
         (custom_home / "config.toml").write_text('model = "fixture-only"\n')
-        manager = h.Manager(custom_home, self.root, sys.executable, "review")
+        sibling = self.root / "sibling-workspace"
+        sibling.mkdir()
+        manager = h.Manager(custom_home, sibling, sys.executable, "review")
         result = manager.inspect()
         self.assertEqual(result["status"], "READY", result["issues"])
         # A different .codex/config.toml in the workspace's ancestry is still
@@ -343,7 +386,8 @@ class ConfigLayerTests(ConfigFixture):
     def test_workspace_equal_to_home_parent(self):
         manager = h.Manager(self.home, self.user_home, sys.executable, "review")
         result = manager.inspect()
-        self.assertEqual(result["status"], "READY", result["issues"])
+        self.assertEqual(result["issues"], ["WORKSPACE_CONTAINS_USER_HOME"])
+        self.assertNotIn("REVIEW_REQUIRED_PROJECT", result["issues"])
 
     def test_distinct_project_configs_are_not_skipped(self):
         for parent in (self.user_home / "projects", self.work):
@@ -399,7 +443,7 @@ class ConfigPreferenceTests(ConfigFixture):
         super().setUp()
         detection = patch.object(h, "detect", return_value=(
             {"path": "fixture", "sha256": "a" * 64}, "0.164.0",
-            {"id": "fixture", "config_policy": "preferences-v1"}))
+            {"id": "fixture", "config_policy": "preferences-v1", "protections": "default-v1"}))
         detection.start()
         self.addCleanup(detection.stop)
         self.project = self.work / ".codex" / "config.toml"

@@ -39,6 +39,50 @@
         "https://learn.chatgpt.com/docs/permissions"
       ],
       "reviewed": "2026-10-25"
+    },
+    {
+      "id": "linux-protections-0165",
+      "config_policy": "preferences-v1",
+      "protections": "default-v1",
+      "rules_policy": "literal-v1",
+      "versions": ["0.165.0"],
+      "platform": "linux",
+      "machine": ["x86_64"],
+      "renderer": "permissions-v1",
+      "probe": "sandbox-permissions-v1",
+      "required_help": {
+        "root": ["--strict-config", "--profile"],
+        "sandbox": ["--profile", "--permission-profile", "--cd"],
+        "rules": ["--rules"]
+      },
+      "sources": [
+        "https://learn.chatgpt.com/docs/permissions",
+        "https://learn.chatgpt.com/docs/agent-configuration/rules"
+      ],
+      "reviewed": "2026-10-29"
+    },
+    {
+      "id": "linux-preferences-0166",
+      "config_policy": "preferences-v1",
+      "user_preferences": "display-v1",
+      "protections": "default-v1",
+      "rules_policy": "literal-v1",
+      "versions": ["0.166.0"],
+      "platform": "linux",
+      "machine": ["x86_64"],
+      "renderer": "permissions-v1",
+      "probe": "sandbox-permissions-v1",
+      "required_help": {
+        "root": ["--strict-config", "--profile"],
+        "sandbox": ["--profile", "--permission-profile", "--cd"],
+        "rules": ["--rules"]
+      },
+      "sources": [
+        "https://learn.chatgpt.com/docs/config-file/config-reference",
+        "https://developers.openai.com/codex/config-schema.json",
+        "https://learn.chatgpt.com/docs/permissions"
+      ],
+      "reviewed": "2026-11-01"
     }
   ]
 }
