@@ -12,6 +12,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 | [spec-driven-development](skills/spec-driven-development/SKILL.md) | 要求を仕様・受入基準・小さなタスクに整理し、依頼された範囲でテスト・実装・検証・引き継ぎを進める |
 | [secret-checks](skills/secret-checks/SKILL.md) | ローカル環境と既存hookを診断し、秘密情報の検査hookを導入・検証・更新・切り戻し・解除・cleanupする |
 | [codex-hardening](skills/codex-hardening/SKILL.md) | Codex CLIの版と設定を診断し、専用profileの導入・sandbox動作検証・復旧を行う |
+| [claude-code-hardening](skills/claude-code-hardening/SKILL.md) | Claude Codeの設定をレビューし、調査用／開発用の設定候補を生成・照合する。実機での有効化確認は別手順 |
 
 ## 導入と使い方
 
@@ -101,6 +102,29 @@ Skillのコピーだけではhookは有効になりません。導入時に環�
 0.164.0では、モデル・応答表示など5項目に限ってproject設定を保持したまま検査できます。権限の上書きや未検証の設定は引き続き停止します。開発用プロファイルも一般の一時領域への書き込みは許可していません。Goなどはタスク単位でworkspace内にキャッシュ・一時領域を明示する必要があり、詳しい実測結果は[検証記録](skills/codex-hardening/evals/validation.md)にまとめています。
 
 profileは`<codex-home>/acp-review.config.toml`または`acp-development.config.toml`に配置され、新しいセッションで明示的に選択します。検証には一時ファイルとローカル接続を使い、モデルや外部サービスを呼びません。sandboxの起動失敗は拒否成功に数えません。Web・MCP・承認UI・ログ保存の安全性や秘密情報の読み取り防止は別の確認事項です。[操作・復旧手順](skills/codex-hardening/references/operations.md)と[制限事項](skills/codex-hardening/references/limitations.md)を参照してください。
+
+### Claude Code版のhardening
+
+`skills/claude-code-hardening/`をフォルダごと、対象プロジェクトの`.claude/skills/claude-code-hardening/`、または個人用の`~/.claude/skills/claude-code-hardening/`へ配置すると、`/claude-code-hardening`で呼び出せます。[Claude Code公式のSkill仕様](https://code.claude.com/docs/en/skills)
+
+> /claude-code-hardening この環境の設定と継承元を確認し、開発用の設定候補を作って。保護内容と変更先を示し、実機での有効化はまだ行わないで。
+
+| 用途 | mode | 設定候補の意図 |
+| --- | --- | --- |
+| ファイルを読んで調査する | `review` | 編集・shell実行・委譲を拒否。shellを使うレビューやテストには不向き |
+| コード編集・ローカルテスト | `development` | shellと編集に人間の承認を要求し、sandboxと資格情報パス保護を設定 |
+
+Python 3.10以上の標準ライブラリだけで動くhelperが、`plan` → `export` → `verify`で候補JSONを生成・照合します。出力先はworkspace外の専用ディレクトリで、既存ファイルは上書きしません。`settings.json`や認証設定へ自動適用する機能はありません。
+
+**初版は設定候補の生成・照合までを自動検証しています。Claude Code実機で検証済みの版はありません。** `ARTIFACT_MATCH`は生成内容との一致を意味し、sandboxの動作確認ではありません。既存設定の配列は結合されるため、空の許可リストを出力しても既存の許可は消えません。新しいセッションへの有効化には、版・設定の継承元・実際の拒否動作を確認します。[操作と有効化手順](skills/claude-code-hardening/references/operations.md)、[制限事項](skills/claude-code-hardening/references/limitations.md)
+
+[okdt/claude-code-hardening-cheatsheet](https://github.com/okdt/claude-code-hardening-cheatsheet)も参考にしています。sandboxと権限ルールを重ねる方針を取り入れ、こちらではshellの自動承認や通信先の事前許可を既定に含めません。参照した版と採用判断は[出典・仕様の確認記録](skills/claude-code-hardening/references/sources.md)に記載しています。
+
+helperのテストは使い捨てのローカルfixtureだけで実行できます。Claude本体・モデル・外部サービスは呼び出しません。
+
+```sh
+python3 -B -m unittest discover -s skills/claude-code-hardening/evals -p 'test_*.py' -v
+```
 
 ### Gitleaksはどこに配置・実行されるか
 
