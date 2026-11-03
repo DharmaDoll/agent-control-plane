@@ -61,6 +61,51 @@ paths:
 
 導入後はCodexの`/skills`で認識を確認してください。表示されない場合はCodexを再起動します。Skillの取得・配置と、GitHub操作に必要な認証設定は別の作業です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
 
+### GitHubから導入する（Claude Code）
+
+Claude Codeでは、導入先リポジトリのルートにある`.claude/skills/`へSkillをフォルダごと配置します。個人の全リポジトリで共通利用する場合は`~/.claude/skills/`を使います。配置したSkillは`/スキル名`で呼び出せます。[Claude Code公式ドキュメント](https://code.claude.com/docs/en/skills)
+
+導入先リポジトリでClaude Codeを開き、次の依頼を送ってください。この例はGitを使って取得し、共通の3つのSkillと`claude-code-hardening`を配置します。
+
+```text
+以下のGitHubリポジトリから、4つのSkillを導入してください。
+
+repository: DharmaDoll/agent-control-plane
+url: https://github.com/DharmaDoll/agent-control-plane.git
+ref: main
+paths:
+- skills/spec-driven-development
+- skills/controlled-github
+- skills/secret-checks
+- skills/claude-code-hardening
+
+配置先は、このリポジトリのルートにある .claude/skills/ としてください。
+各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
+
+- 最初に導入先のルート、git status --short、既存のSkill配置を確認する
+- HTTPSのGitを使って一時ディレクトリへ取得し、指定refのcommit SHAを確定する
+- 4つとも同じcommitの内容を使い、取得したSHAを報告する
+- Gitが使えない場合や取得に失敗した場合は、別方式へ切り替えず停止する
+- コピー前に全配置先を確認し、同名Skillや配置先のシンボリックリンクがあれば変更せず報告する
+- 配布元ルートのAGENTS.md・CLAUDE.md・skills_plan/・.gitはコピーしない
+- 取得したscriptの実行、hookの導入、保護設定の生成・有効化は行わない
+- 認証設定、既存のCLAUDE.md・AGENTS.md・settings.jsonは変更しない
+- commit・pushはしない
+- 導入後に各SkillのSKILL.mdと参照ファイルの存在、コピー元との内容の一致を確認する
+```
+
+一部だけ必要なら、`paths`から不要なSkillを外してください。個人用にする場合は、依頼文の配置先を`~/.claude/skills/`へ変更します。同名Skillが個人用とリポジトリ用の両方にあると個人用が優先されるため、重複配置を避けてください。[配置場所と優先順位](https://code.claude.com/docs/en/skills#resolve-skills-that-share-a-name)
+
+取得した版は自動更新されません。更新時は差分を確認して置き換え、同じ版を再現したい場合は`ref`にcommit SHAを指定します。Skillの内容と取得元を確認してから利用してください。
+
+導入後はClaude Codeで`/`を入力し、導入したSkillが候補に表示されることを確認します。表示されない場合は、導入先リポジトリでClaude Codeを再起動してください。例えば次のように呼び出します。[呼び出し方法](https://code.claude.com/docs/en/skills)
+
+```text
+/claude-code-hardening この環境と用途を確認し、推奨サンプルと制限を説明して。まだ設定の生成・有効化はしないで。
+```
+
+Skillを配置しただけでは、秘密情報の検査hookやClaude Codeの保護設定は有効になりません。必要なツールと対応OSは各Skillの要件に従い、保護設定の準備は[Claude Code版のhardening](#claude-code版のhardening)へ進んでください。
+
 ### 利用例
 
 依頼例：
