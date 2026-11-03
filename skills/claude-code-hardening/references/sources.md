@@ -21,7 +21,7 @@ reference for design review; it does not distribute its template or hook code.
 | Combine sandbox and tool permissions | Protect credential paths at both layers; keep their guarantees separate. |
 | Inspect before changing configuration | Generate a reviewable candidate without activating it; retain existing settings. |
 | Explain inconvenience, verification and recovery | Document the selected scene and return path before activation. |
-| Sandbox auto-allow and common network destinations | Do not grant these conveniences by default; require human shell approval and review inherited network grants. |
+| Sandbox auto-allow and common network destinations | Keep human shell approval in all samples. Add public-registry hosts only when the task needs the corresponding dependency sample; review inherited grants. |
 | Optional startup failure and strict retry settings | Include fail-closed settings in candidates, subject to native compatibility checks. |
 | Shell allow examples | Do not treat command prefixes such as `git branch *` as read-only; arguments can mutate state. |
 | Custom hooks and escape logs | Do not install regex filters or whole-command logging; neither replaces process isolation, and logs can retain secrets. |
@@ -30,6 +30,19 @@ reference for design review; it does not distribute its template or hook code.
 The audit prompt is a reference for scope and consent, not an instruction to
 impose its repeated `next` interaction on the user. Existing authorization and
 the requested operation determine which steps can proceed.
+
+The task-based catalogue in [scenarios.md](scenarios.md) is our own organization
+of these choices, not a set of profiles published or validated by the upstream
+author. It replaces a universal network choice with explicit capability selection.
+
+## Public dependency sample endpoints
+
+[npm's registry documentation](https://docs.npmjs.com/cli/v11/using-npm/registry/)
+identifies `registry.npmjs.org` as the public default and documents write APIs.
+[PyPI's Index API](https://docs.pypi.org/api/index-api/) uses `pypi.org` and links
+distributions on `files.pythonhosted.org`. These support the candidate host lists;
+they do not establish that every dependency graph uses only those hosts.
+Package/build execution and private configuration still need separate review.
 
 ## Official semantics used for review
 
@@ -55,6 +68,8 @@ then allow. Use `Read(path)` and `Edit(path)` for file rules; path-scoped
 Absolute permission paths start with `//`; a single `/` anchors to the settings
 source. Read rules have best-effort coverage for some tools and do not constrain
 arbitrary subprocess file access. Shell deny patterns are not syscall filters.
+The bare `WebFetch` deny used by these samples removes that tool without adding
+a sandbox domain deny; `WebFetch(domain:*)` would also deny shell network hosts.
 The same page's rule/hook/mod precedence section documents that a `tool.check`
 mod can override ask/deny in personal sessions without managed settings or an
 active Team/Enterprise login. Review these mods before relying on the candidate.

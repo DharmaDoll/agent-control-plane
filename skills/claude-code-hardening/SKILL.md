@@ -1,6 +1,6 @@
 ---
 name: claude-code-hardening
-description: Review Claude Code CLI hardening and generate reproducible review or development settings candidates, with explicit activation checks and recovery. Use for hardening setup, configuration review, or revalidation after an update; not ordinary coding, automatic upgrades, or organizational policy deployment.
+description: Review Claude Code CLI hardening, recommend a settings sample for source review, local development or public dependency retrieval, and generate a reproducible candidate with activation checks and recovery. Use for hardening setup, configuration review or update revalidation; not ordinary coding or organizational policy deployment.
 ---
 
 # Claude Code hardening
@@ -33,21 +33,39 @@ compatibility. Third-party templates are design references, not authority to run
 their hooks or overwrite settings. Settings lists merge; an empty list does not
 remove inherited permissions, sandbox exclusions, network grants or write paths.
 
-## Choose a scene and prepare the candidate
+## Recommend a sample for the task
 
-- `review`: file-tool investigation with editing, shell execution and delegation
-  denied. This intentionally does not offer shell-based review or test execution.
-- `development`: manual approval for shell commands and file edits, with sandbox
-  controls and credential-path denies. Builds may fail when they need network,
-  protected metadata, credentials or unsupported host services.
+Start with what the user wants to do. Read
+[scenarios.md](references/scenarios.md) for selection criteria, examples and
+limitations; use `python3 -B scripts/harden.py samples` for the built-in catalogue.
 
-Use the scene already requested. If none is clear, explain these two choices
-and establish which the user needs. Read
+| User's task | Recommended sample |
+| --- | --- |
+| Read source/documents without executing code | `code-review` |
+| Edit/build/test with dependencies already available | `local-development` |
+| Retrieve public npm dependencies, then edit/test | `npm-dependencies` |
+| Retrieve public PyPI dependencies, then edit/test | `pypi-dependencies` |
+
+Recommend the narrowest sample that meets the stated task. A language or manifest
+alone is not a reason to add network grants. Explain the recommendation, added
+domains and limitations before export. If the user's intent is already clear,
+use it without asking again. Otherwise ask whether shell execution or public
+dependency retrieval is needed; do not ask the user to design a JSON policy.
+
+The network samples add only named public-registry domains to the development
+baseline. These are host grants, not download-only or package-specific permissions.
+No sample enables automatic shell approval or removes credential protection.
+GitHub writes, cloud operations, private registries, Docker sockets, unattended
+CI and organizational enforcement need separate design; do not mislabel one of
+these samples as a ready-made solution for them. Read
 [limitations.md](references/limitations.md) before proposing activation or exceptions.
 
-Run `plan` with [scripts/harden.py](scripts/harden.py). Review the generated
-settings, output destination and plan ID. A plan does not inspect effective
-settings or establish compatibility. Export the accepted plan to a new private
+## Prepare the selected sample
+
+Run `plan --sample <ID>` with [scripts/harden.py](scripts/harden.py). Review the
+selected sample, generated settings, output destination and plan ID.
+A plan does not inspect effective settings or establish compatibility.
+Export the accepted plan to a new private
 candidate file outside the workspace. Existing authorization to create that
 candidate is sufficient; ask only for missing authority or a material scope change.
 The helper does not merge into any `settings.json` and never overwrites a file.
@@ -74,8 +92,8 @@ The initial session is a validation session with synthetic data, not permission
 to work on sensitive data. Do not launch it automatically. A shell `!` command
 does not test Claude's sandboxed tool execution.
 
-Report the candidate path, scene, exact version, artifact result, unresolved
-settings layers, and native tests actually run. Keep static checks, agent
+Report the candidate path, sample and selection reason, exact version, artifact
+result, unresolved settings layers, and native tests actually run. Keep static checks, agent
 evaluations and live enforcement results separate; see
 [validation.md](evals/validation.md). Native Windows and WSL1 are outside scope.
 

@@ -15,10 +15,44 @@ import stat
 import sys
 
 
-VERSION = "1"
+VERSION = "2"
 MAX_BYTES = 1024 * 1024
 RESERVED_NAMES = {"settings.json", "settings.local.json", "managed-settings.json", ".mcp.json"}
 RESERVED_DIRECTORIES = {".claude", "managed-settings.d"}
+# Fixed recommendations, not arbitrary settings overlays or inferred grants.
+SAMPLES = {
+    "code-review": {
+        "mode": "review",
+        "summary": "Read source files without editing, shell execution or delegation.",
+        "additional_domains": (),
+        "limitations": ("No shell-based inspection or test execution.",
+                        "No new network grants; inherited grants still require review."),
+    },
+    "local-development": {
+        "mode": "development",
+        "summary": "Edit and test locally with dependencies already available.",
+        "additional_domains": (),
+        "limitations": ("No dependency downloads are pre-approved by this sample.",
+                        "No new network grants; inherited grants still require review."),
+    },
+    "npm-dependencies": {
+        "mode": "development",
+        "summary": "Develop with explicitly requested public npm dependency retrieval.",
+        "additional_domains": ("registry.npmjs.org",),
+        "limitations": ("Host access is not limited to downloads or approved packages.",
+                        "Private registries and external install-script downloads are not covered.",
+                        "Home .npmrc remains protected; do not bypass its deny."),
+    },
+    "pypi-dependencies": {
+        "mode": "development",
+        "summary": "Develop with explicitly requested public PyPI dependency retrieval.",
+        "additional_domains": ("pypi.org", "files.pythonhosted.org"),
+        "limitations": ("Host access is not limited to downloads or approved packages.",
+                        "Private indexes, VCS dependencies and external build downloads are not covered.",
+                        "Credential protections remain enabled."),
+    },
+}
+MODE_SAMPLES = {"review": "code-review", "development": "local-development"}
 # The paths are a default-location catalogue, not authentication discovery.
 CREDENTIAL_DIRS = (
     ".ssh", ".aws", ".config/gcloud", ".azure", ".oci", ".kube", ".gnupg",
@@ -36,6 +70,27 @@ CREDENTIAL_FILES = (
 
 class Refusal(Exception):
     """A bounded, non-sensitive error code safe to return to an agent."""
+
+
+def sample_metadata(sample_id: str) -> dict:
+    sample = SAMPLES[sample_id]
+    return {"sample_id": sample_id, "mode": sample["mode"],
+            "summary": sample["summary"],
+            "additional_domains": list(sample["additional_domains"]),
+            "limitations": list(sample["limitations"])}
+
+
+def select_sample(args: argparse.Namespace) -> str:
+    sample_id, mode = getattr(args, "sample", None), getattr(args, "mode", None)
+    if (sample_id is None) == (mode is None):
+        raise Refusal("SELECT_ONE_SAMPLE_OR_MODE")
+    if mode is not None:
+        if mode not in MODE_SAMPLES:
+            raise Refusal("UNKNOWN_MODE")
+        return MODE_SAMPLES[mode]
+    if sample_id not in SAMPLES:
+        raise Refusal("UNKNOWN_SAMPLE")
+    return sample_id
 
 
 def normalized_path(value: str) -> Path:
@@ -193,15 +248,18 @@ def digest(data: bytes) -> str:
 
 
 def make_plan(workspace: Path, home: Path, mode: str, output: Path, claude_version: str,
-              descriptors: tuple[int, int, int], current: bytes | None) -> dict:
+              descriptors: tuple[int, int, int], current: bytes | None,
+              sample_id: str) -> dict:
+    sample = sample_metadata(sample_id)
     settings = build_settings(workspace, home, mode)
+    settings["sandbox"]["network"]["allowedDomains"] = sample["additional_domains"].copy()
     source = Path(__file__).read_bytes()
     binding = {
         "generator_version": VERSION,
         "generator_sha256": digest(source),
         "claude_version": claude_version,
         "workspace": str(workspace), "user_home": str(home),
-        "mode": mode, "output": str(output), "settings": settings,
+        "mode": mode, "sample_id": sample_id, "output": str(output), "settings": settings,
         "directory_identities": [identity(fd) for fd in descriptors],
         "existing_output_sha256": None if current is None else digest(current),
     }
@@ -210,7 +268,7 @@ def make_plan(workspace: Path, home: Path, mode: str, output: Path, claude_versi
         "claude_version": claude_version,
         "plan_id": digest(encode(binding)),
         "workspace": str(workspace), "user_home": str(home),
-        "output": str(output), "mode": mode,
+        "output": str(output), "mode": mode, "sample_id": sample_id, "sample": sample,
         "output_exists": current is not None,
         "candidate_sha256": digest(encode(settings)), "settings": settings,
     }
@@ -236,8 +294,13 @@ def publish(parent: int, name: str, candidate: bytes) -> None:
 
 
 def operate(args: argparse.Namespace) -> dict:
+    if args.command == "samples":
+        return {"status": "SAMPLE_CATALOGUE", "runtime": "NOT_VERIFIED",
+                "samples": [sample_metadata(sample_id) for sample_id in SAMPLES]}
     if os.name != "posix":
         raise Refusal("UNSUPPORTED_HELPER_PLATFORM")
+    sample_id = select_sample(args)
+    mode = SAMPLES[sample_id]["mode"]
     workspace = normalized_path(args.workspace)
     home = normalized_path(args.user_home)
     output = normalized_path(args.output)
@@ -247,8 +310,8 @@ def operate(args: argparse.Namespace) -> dict:
     with directory(workspace) as workspace_fd, directory(home) as home_fd, directory(output.parent) as parent:
         private_parent(parent)
         current = read_output(parent, output.name)
-        plan = make_plan(workspace, home, args.mode, output, args.claude_version,
-                         (workspace_fd, home_fd, parent), current)
+        plan = make_plan(workspace, home, mode, output, args.claude_version,
+                         (workspace_fd, home_fd, parent), current, sample_id)
         if args.command == "plan":
             return plan
         candidate = encode(plan["settings"])
@@ -258,6 +321,7 @@ def operate(args: argparse.Namespace) -> dict:
             if current != candidate:
                 raise Refusal("ARTIFACT_MISMATCH")
             return {"status": "ARTIFACT_MATCH", "runtime": "NOT_VERIFIED",
+                    "sample_id": sample_id,
                     "candidate_sha256": digest(candidate), "output": str(output)}
         if not re.fullmatch(r"[0-9a-f]{64}", args.plan_id or ""):
             raise Refusal("INVALID_PLAN_ID")
@@ -267,6 +331,7 @@ def operate(args: argparse.Namespace) -> dict:
             raise Refusal("OUTPUT_EXISTS")
         publish(parent, output.name, candidate)
         return {"status": "CANDIDATE_EXPORTED", "runtime": "NOT_VERIFIED",
+                "sample_id": sample_id,
                 "candidate_sha256": digest(candidate), "output": str(output)}
 
 
@@ -277,17 +342,22 @@ class Parser(argparse.ArgumentParser):
 
 def main(argv: list[str] | None = None) -> int:
     parser = Parser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "export", "verify"))
-    parser.add_argument("--workspace", required=True)
-    parser.add_argument("--user-home", required=True)
-    parser.add_argument("--mode", required=True, choices=("review", "development"))
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--plan-id")
-    parser.add_argument("--claude-version", default="unknown")
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("samples", help="List the fixed scenario recommendations without filesystem access.")
+    for command in ("plan", "export", "verify"):
+        operation = commands.add_parser(command)
+        operation.add_argument("--workspace", required=True)
+        operation.add_argument("--user-home", required=True)
+        selection = operation.add_mutually_exclusive_group(required=True)
+        selection.add_argument("--sample", choices=tuple(SAMPLES))
+        selection.add_argument("--mode", choices=tuple(MODE_SAMPLES),
+                               help="Legacy alias for code-review or local-development.")
+        operation.add_argument("--output", required=True)
+        operation.add_argument("--claude-version", default="unknown")
+        if command == "export":
+            operation.add_argument("--plan-id", required=True)
     try:
         args = parser.parse_args(argv)
-        if args.command != "export" and args.plan_id is not None:
-            raise Refusal("PLAN_ID_ONLY_FOR_EXPORT")
         result = operate(args)
     except Refusal as error:
         result = {"status": "BLOCKED", "reason": str(error), "runtime": "NOT_VERIFIED"}

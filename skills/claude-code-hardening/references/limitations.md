@@ -7,8 +7,8 @@ commands with excessive scope. A prose instruction alone does not enforce a
 boundary. Generating a new settings mechanism ad hoc for every session also
 makes the intended policy difficult to review or reproduce.
 
-This skill generates fixed settings from explicit paths and a scene. Its plan
-ID binds the candidate and inputs; export refuses overwrites, and verify checks
+This skill generates fixed settings from explicit paths and a selected sample.
+Its plan ID binds the candidate and inputs; export refuses overwrites, and verify checks
 the expected bytes. The Python helper is trusted local code, not a sandbox.
 Its filesystem safeguards do not defend against a malicious process running as
 the same user or an administrator. Keep candidates and their parent directories
@@ -25,15 +25,18 @@ alone do not establish the claimed prompt or denial behavior in such a session.
 
 ## Default intent
 
-Both scenes request manual permissions, disable bypass and auto permission modes,
+All samples request manual permissions, disable bypass and auto permission modes,
 deny WebFetch/WebSearch and delegation, and enable sandboxing with no automatic
 shell approval or unsandboxed fallback. Development asks before shell commands
 and editing. Review additionally denies command tools and all editing; it is a
 file-tool review scene, not a read-only shell sandbox.
 
-Candidate generation adds no network or extra-write grants. Strict allowlisting
-is requested, but inherited domain grants can survive. Existing write paths,
-excluded commands and sockets also need review. An empty array is not a revocation.
+The review/local-development samples add no network grants. The two dependency
+samples add only their declared public-registry hosts; none adds extra-write
+grants. Host access is not download-only access or a package safety check.
+Strict allowlisting is requested, but inherited domain grants can survive.
+Existing write paths, excluded commands and sockets also need review.
+An empty array is not a revocation.
 The sandbox normally permits its temporary directory; this is not Codex's profile
 with general temporary-directory writes withheld. Local binding and socket
 restrictions depend on platform and optional runtime dependencies.
@@ -78,8 +81,8 @@ all exfiltration, prompt injection, data loss or a compromised host.
 - Native Windows, WSL1 or an unverified sandbox implementation.
 - Organizational enforcement: use administrator-controlled policy with its own
   deployment and validation, not an optional local candidate file.
-- Work requiring unreviewed hooks/MCP, socket access, custom proxies, network
-  grants, inherited exclusions, or credentials denied by this catalogue.
+- Work requiring unreviewed hooks/MCP, socket access, custom proxies, additional
+  network grants, inherited exclusions, or credentials denied by this catalogue.
 - Untrusted projects requiring whole-process containment: put the entire agent
   and its services in a separately managed container or VM first.
 - A promise of native protection without the exact-version activation checks.

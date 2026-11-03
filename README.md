@@ -12,7 +12,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 | [spec-driven-development](skills/spec-driven-development/SKILL.md) | 要求を仕様・受入基準・小さなタスクに整理し、依頼された範囲でテスト・実装・検証・引き継ぎを進める |
 | [secret-checks](skills/secret-checks/SKILL.md) | ローカル環境と既存hookを診断し、秘密情報の検査hookを導入・検証・更新・切り戻し・解除・cleanupする |
 | [codex-hardening](skills/codex-hardening/SKILL.md) | Codex CLIの版と設定を診断し、専用profileの導入・sandbox動作検証・復旧を行う |
-| [claude-code-hardening](skills/claude-code-hardening/SKILL.md) | Claude Codeの設定をレビューし、調査用／開発用の設定候補を生成・照合する。実機での有効化確認は別手順 |
+| [claude-code-hardening](skills/claude-code-hardening/SKILL.md) | Claude Codeの利用シナリオに合う推奨サンプルを選び、設定候補を生成・照合する。実機での有効化確認は別手順 |
 
 ## 導入と使い方
 
@@ -199,18 +199,32 @@ profileは`<codex-home>/acp-review.config.toml`または`acp-development.config.
 
 `skills/claude-code-hardening/`をフォルダごと、対象プロジェクトの`.claude/skills/claude-code-hardening/`、または個人用の`~/.claude/skills/claude-code-hardening/`へ配置すると、`/claude-code-hardening`で呼び出せます。[Claude Code公式のSkill仕様](https://code.claude.com/docs/en/skills)
 
-> /claude-code-hardening この環境の設定と継承元を確認し、開発用の設定候補を作って。保護内容と変更先を示し、実機での有効化はまだ行わないで。
+最初に「何をしたいか」を伝えると、その作業に合う推奨サンプルと、増える権限・制約を提示します。設定JSONを手書きする必要はありません。
 
-| 用途 | mode | 設定候補の意図 |
+> /claude-code-hardening このプロジェクトを修正してテストしたい。依存関係は導入済みです。用途に合うサンプルを勧め、設定候補を作って。実機での有効化はまだ行わないで。
+
+| 利用シナリオ | 推奨サンプル | 設定候補の意図 |
 | --- | --- | --- |
-| ファイルを読んで調査する | `review` | 編集・shell実行・委譲を拒否。shellを使うレビューやテストには不向き |
-| コード編集・ローカルテスト | `development` | shellと編集に人間の承認を要求し、sandboxと資格情報パス保護を設定 |
+| コードを読んで調査する | `code-review` | 編集・shell実行・委譲を拒否 |
+| 依存関係が揃った環境で編集・テストする | `local-development` | shellと編集に人間の承認を要求。通信先の許可は追加しない |
+| 公開npmパッケージを取得して開発する | `npm-dependencies` | 開発用の保護を維持し、`registry.npmjs.org`を追加 |
+| 公開PyPIパッケージを取得して開発する | `pypi-dependencies` | 開発用の保護を維持し、`pypi.org`・`files.pythonhosted.org`を追加 |
+
+Node.jsやPythonのプロジェクトでも、依存取得が不要なら`local-development`を選びます。通信先の許可はダウンロード専用ではなく、許可ホストへの送信も可能です。パッケージの安全性を保証するものではありません。GitHubへの書込み、クラウド運用、private registry、CIの無人実行は別の設計が必要です。[選び方・サンプル差分・利用例](skills/claude-code-hardening/references/scenarios.md)
+
+Skillのディレクトリで一覧を確認できます。
+
+```sh
+python3 -B scripts/harden.py samples
+```
+
+候補生成時は、例えば`plan --sample npm-dependencies`と指定します。出力には選択したサンプル、追加する通信先、制約、設定JSONが含まれます。従来の`--mode review`／`--mode development`も、それぞれ`code-review`／`local-development`の別名として使えます。
 
 Python 3.10以上の標準ライブラリだけで動くhelperが、`plan` → `export` → `verify`で候補JSONを生成・照合します。出力先はworkspace外の専用ディレクトリで、既存ファイルは上書きしません。`settings.json`や認証設定へ自動適用する機能はありません。
 
 **初版は設定候補の生成・照合までを自動検証しています。Claude Code実機で検証済みの版はありません。** `ARTIFACT_MATCH`は生成内容との一致を意味し、sandboxの動作確認ではありません。既存設定の配列は結合されるため、空の許可リストを出力しても既存の許可は消えません。新しいセッションへの有効化には、版・設定の継承元・実際の拒否動作を確認します。[操作と有効化手順](skills/claude-code-hardening/references/operations.md)、[制限事項](skills/claude-code-hardening/references/limitations.md)
 
-[okdt/claude-code-hardening-cheatsheet](https://github.com/okdt/claude-code-hardening-cheatsheet)も参考にしています。sandboxと権限ルールを重ねる方針を取り入れ、こちらではshellの自動承認や通信先の事前許可を既定に含めません。参照した版と採用判断は[出典・仕様の確認記録](skills/claude-code-hardening/references/sources.md)に記載しています。
+[okdt/claude-code-hardening-cheatsheet](https://github.com/okdt/claude-code-hardening-cheatsheet)も参考にしています。sandboxと権限ルールを重ね、利用目的に応じて設定を選ぶ考え方を取り入れています。こちらの4サンプルは独自に整理したもので、全サンプルでshellの自動承認を無効にし、依存取得が必要な場合だけ対象registryの通信先を追加します。参照した版と採用判断は[出典・仕様の確認記録](skills/claude-code-hardening/references/sources.md)に記載しています。
 
 helperのテストは使い捨てのローカルfixtureだけで実行できます。Claude本体・モデル・外部サービスは呼び出しません。
 

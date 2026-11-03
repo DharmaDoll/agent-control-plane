@@ -298,6 +298,110 @@ class CandidateTests(unittest.TestCase):
         with self.assertRaisesRegex(harden.Refusal, "INVALID_CLAUDE_VERSION"):
             self.plan(claude_version="latest")
 
+    def run_cli(self, arguments):
+        capture = io.StringIO()
+        with contextlib.redirect_stdout(capture):
+            result = harden.main(arguments)
+        return result, json.loads(capture.getvalue())
+
+    def test_samples_lists_scenarios_without_inspecting_files(self):
+        with mock.patch.object(harden, "directory", side_effect=AssertionError("filesystem access")):
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("file read")):
+                code, result = self.run_cli(["samples"])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["runtime"], "NOT_VERIFIED")
+        samples = {sample["sample_id"]: sample for sample in result["samples"]}
+        self.assertEqual(set(samples), {"code-review", "local-development", "npm-dependencies", "pypi-dependencies"})
+        self.assertEqual(samples["local-development"]["additional_domains"], [])
+        self.assertEqual(samples["npm-dependencies"]["additional_domains"], ["registry.npmjs.org"])
+        for sample in samples.values():
+            self.assertTrue(sample["summary"])
+            self.assertTrue(sample["limitations"])
+
+    def test_all_samples_complete_lifecycle(self):
+        expected_domains = {
+            "code-review": [], "local-development": [],
+            "npm-dependencies": ["registry.npmjs.org"],
+            "pypi-dependencies": ["pypi.org", "files.pythonhosted.org"],
+        }
+        for sample, domains in expected_domains.items():
+            with self.subTest(sample=sample):
+                options = dict(sample=sample, mode=None, output=str(self.output_dir / (sample + ".json")))
+                plan = self.plan(**options)
+                self.assertEqual(plan["sample_id"], sample)
+                self.assertEqual(plan["sample"]["additional_domains"], domains)
+                self.assertEqual(plan["settings"]["sandbox"]["network"]["allowedDomains"], domains)
+                self.assertFalse(Path(options["output"]).exists())
+                self.assertEqual(self.export(**options)["sample_id"], sample)
+                verified = harden.operate(self.arguments("verify", **options))
+                self.assertEqual(verified["sample_id"], sample)
+                self.assertEqual(verified["status"], "ARTIFACT_MATCH")
+                self.assertEqual(verified["runtime"], "NOT_VERIFIED")
+
+    def test_dependency_samples_change_only_explicit_domains(self):
+        baseline = self.plan()["settings"]
+        for sample in ("npm-dependencies", "pypi-dependencies"):
+            with self.subTest(sample=sample):
+                candidate = self.plan(mode=None, sample=sample)["settings"]
+                self.assertNotEqual(candidate, baseline)
+                candidate["sandbox"]["network"]["allowedDomains"] = []
+                self.assertEqual(candidate, baseline)
+
+    def test_legacy_modes_keep_setting_bytes_and_resolve_to_same_plan(self):
+        # Captured from the pre-selector implementation with these fixed paths.
+        fingerprints = {
+            "review": "88c855c3b3fa24f9a129cc85369ddcfd9d437ca031d6726250dfcc3e0f860532",
+            "development": "bdb4f021140f1880f813845b231b05038545bc2cb57730b5a4ef9993fa57a4bf",
+        }
+        for mode, sample in (("review", "code-review"), ("development", "local-development")):
+            with self.subTest(mode=mode):
+                settings = harden.build_settings(Path('/example/workspace'), Path('/example/home'), mode)
+                self.assertEqual(harden.digest(harden.encode(settings)), fingerprints[mode])
+                self.assertEqual(self.plan(mode=mode), self.plan(mode=None, sample=sample))
+
+    def test_sample_change_invalidates_plan_with_same_mode(self):
+        plan = self.plan(mode=None, sample="local-development")
+        with self.assertRaisesRegex(harden.Refusal, "STALE_PLAN"):
+            harden.operate(self.arguments("export", mode=None, sample="npm-dependencies", plan_id=plan["plan_id"]))
+        self.assertFalse(self.output.exists())
+
+    def test_different_dependency_sample_fails_verification(self):
+        self.export(mode=None, sample="npm-dependencies")
+        with self.assertRaisesRegex(harden.Refusal, "ARTIFACT_MISMATCH"):
+            harden.operate(self.arguments("verify", mode=None, sample="pypi-dependencies"))
+
+    def test_cli_rejects_unknown_ambiguous_and_missing_sample(self):
+        base = ["plan", "--workspace", str(self.workspace), "--user-home", str(self.home),
+                "--output", str(self.output)]
+        for selection in ([], ["--sample", "private-secret-sample"],
+                          ["--sample", "npm-dependencies", "--mode", "development"]):
+            with self.subTest(selection=selection):
+                code, result = self.run_cli(base + selection)
+                self.assertEqual(code, 2)
+                self.assertEqual(result["reason"], "INVALID_ARGUMENTS")
+                self.assertNotIn("private-secret", json.dumps(result))
+        self.assertFalse(self.output.exists())
+
+    def test_samples_rejects_operation_flags(self):
+        for options in (["--workspace", str(self.workspace)], ["--sample", "code-review"],
+                        ["--claude-version", "2.1.290"], ["--output", str(self.output)]):
+            with self.subTest(options=options):
+                code, result = self.run_cli(["samples"] + options)
+                self.assertEqual(code, 2)
+                self.assertEqual(result["reason"], "INVALID_ARGUMENTS")
+
+    def test_cli_sample_plan_exports_and_verifies(self):
+        options = ["--workspace", str(self.workspace), "--user-home", str(self.home),
+                   "--output", str(self.output), "--sample", "pypi-dependencies"]
+        code, plan = self.run_cli(["plan"] + options)
+        self.assertEqual(code, 0)
+        code, result = self.run_cli(["export"] + options + ["--plan-id", plan["plan_id"]])
+        self.assertEqual(code, 0)
+        self.assertEqual(result["sample_id"], "pypi-dependencies")
+        code, result = self.run_cli(["verify"] + options)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["status"], "ARTIFACT_MATCH")
+
 
 if __name__ == "__main__":
     unittest.main()
