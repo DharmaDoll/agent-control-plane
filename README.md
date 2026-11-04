@@ -20,6 +20,8 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
+`controlled-github`は、`gh`を使う操作の前に[認証情報の保存方式](skills/controlled-github/references/auth-storage.md)も確認します。平文ファイルからの利用を検出した場合は、トークンを表示せず警告します。環境変数経由や保存方式不明も区別して通知し、認証設定の変更や移行は自動で行いません。警告だけで通常の操作を一律に止めることはありませんが、認証失敗・アカウント不一致・検査不能の場合は、その認証を使う操作を停止します。ローカルだけのcommitや、`gh`を使わないSSH操作にはこの検査を要求しません。
+
 `secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。Python側の検査と導入管理は標準ライブラリだけで動き、画像用の外部ライブラリや専用Python環境は不要です。デフォルトのcombined版やGitleaks版では、[固定版ランナーの準備](skills/secret-checks/references/runner.md)が必要です。
 
 ### GitHubから導入する（Codex）

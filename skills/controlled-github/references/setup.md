@@ -31,6 +31,13 @@ the login. Do not paste tokens into chats, files in this repository, or remotes.
 For another approved host, substitute that host consistently; do not silently
 reuse `github.com` or another account.
 
+After establishing the expected account, use the metadata-only
+[storage checker](auth-storage.md) to verify the reported storage source. It
+warns on plaintext tokens, including reported inactive accounts on the selected
+host. A runtime warning does not automatically block an existing operation, but
+it does not satisfy this guide's secure-storage prerequisite for a new setup.
+The checker does not log out, migrate/delete credentials, or change helpers.
+
 `setup-git` changes Git authentication configuration. The human should review
 its scope and any existing credential-helper arrangement before running it.
 No runtime skill operation should repeat this configuration step.
