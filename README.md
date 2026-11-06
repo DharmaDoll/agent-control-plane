@@ -16,7 +16,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 ## 導入と使い方
 
-使いたいSkillを `skills/` からフォルダごと、利用するエージェントが認識するSkillディレクトリへ配置してください。配置場所や呼び出し方法は利用製品の設定に従います。同名のSkillがある場合は、差分を確認してから更新してください。この作業で自動インストールは行いません。
+使いたいSkillを `skills/` からフォルダごと、利用するエージェントが認識するSkillディレクトリへ配置します。GitHubからの取得・配置には下記の共通手順を使ってください。Skillを配置しただけでは、hookや保護設定は有効になりません。
 
 各Skillは単独で利用でき、このリポジトリの他のファイルに依存しません。`controlled-github`にはGitとPython 3.10以上、PR操作には設定済みのGitHub CLIが必要です。`spec-driven-development`自体に追加ツールは不要で、開発先の既存ツールを使います。
 
@@ -24,89 +24,68 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 
 `secret-checks`はLinux／WSL2、Git（`/usr/bin/git`）、Python 3.10以上、POSIX shellを対象とします。Python側の検査と導入管理は標準ライブラリだけで動き、画像用の外部ライブラリや専用Python環境は不要です。デフォルトのcombined版やGitleaks版では、[固定版ランナーの準備](skills/secret-checks/references/runner.md)が必要です。
 
-### GitHubから導入する（Codex）
+<a id="githubから導入するcodex"></a>
+<a id="githubから導入するclaude-code"></a>
 
-このリポジトリを手元にcloneせず、GitHubから取得して導入することもできます。Codexの`skill-installer`は他のGitHubリポジトリからの導入に対応しています。リポジトリ単位で使う場合の配置先は、導入先のルートにある`.agents/skills/`です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
+### GitHubから導入する
 
-導入先リポジトリでCodexを開き、次の依頼を送ってください。配布元は[main branchのskillsディレクトリ](https://github.com/DharmaDoll/agent-control-plane/tree/main/skills)です。
+Codex／Claude Codeとも、同じ[取得・配置・照合手順](docs/installation.md)で導入します。配布元のcommitを一度だけ確定し、共通scriptがSkillをコピーして、欠落・内容不一致・余分なファイルを検出します。成功後は取得元・script・照合用JSONを含む作業ディレクトリを片付け、**導入先にはSkillだけを残します**。途中失敗では作業領域を残し、照合用JSONから状態を確認します。
+
+共通scriptにはPython 3.10以上とGit、POSIX環境が必要です。初期の検証環境はLinuxです。取得先にはworkspace内などの**書き込みが許可された作業領域**を指定し、`/tmp`が使えることは前提にしません。配置先の`.agents`や`.claude`が保護されている場合も、自動で設定を緩めず停止します。
+
+全5つを導入する場合は、対象プロジェクトでエージェントを開き、以下の依頼文を送ってください。`agent`は`codex`・`claude`・`both`から選びます。`both`は同じ版を2つの配置先へ別々に導入します。`scope`はプロジェクト用なら`project`、個人の全プロジェクトで共通利用するなら`user`です。これらは依頼文の選択項目で、scriptのCLIオプションではありません。
 
 ```text
-$skill-installer
-
-以下のGitHubリポジトリから、4つのSkillを導入してください。
+以下のリポジトリから、全5つのSkillを導入してください。
 
 repository: DharmaDoll/agent-control-plane
-ref: main
-paths:
-- skills/spec-driven-development
-- skills/controlled-github
-- skills/secret-checks
-- skills/codex-hardening
+ref: refs/heads/main
+agent: codex
+scope: project
 
-配置先は、このリポジトリのルートにある .agents/skills/ としてください。
-各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
+skills:
+- spec-driven-development
+- controlled-github
+- secret-checks
+- codex-hardening
+- claude-code-hardening
 
-- installerの --repo・--ref・--path を別々に指定する
-- --dest には導入先リポジトリの .agents/skills/ の絶対パスを指定する
-- --method download を使い、失敗時は別方式へ切り替えず停止する
-- 同名Skillが既にある場合は上書きせず報告する
-- 認証設定や既存のAGENTS.mdは変更しない
-- commit・pushはしない
-- 導入後に各SkillのSKILL.mdと参照ファイルの存在を確認する
+配布元の docs/installation.md にある固定取得手順と、
+同じcommitの scripts/manage_skills.py の install・verify を使ってください。
+
+- 導入先のルート、既存Skill、必要な実行環境を確認する
+- 作業領域と配置先の書き込み許可を確認し、/tmpやホームの許可を仮定しない
+- refを一度だけcommit SHAに確定し、その版から配布用scriptと全Skillを取得する
+- 配布用scriptを確認してから実行し、作業ツリーの変更は混ぜない
+- コピー前に作業ディレクトリ内へ照合用JSONを保存し、既存の同名フォルダは上書きしない
+- 依頼した範囲で導入・照合まで進め、Skillごとの結果を報告する
+- 途中失敗では自動rollbackをせず、残った配置・作業領域・再確認方法を報告する
+- 全対象の導入・照合が成功したら、取得元・script・JSONを含む今回の作業ディレクトリを片付け、Skillだけを残す
+- 取得失敗時に別方式や認証方法へ切り替えない
+
+今回はSkillの取得・配置だけを行います。
+Skill内のscript実行、hook導入、保護設定の生成・有効化、
+認証設定や既存の指示ファイルの変更、commit・pushは行わないでください。
+
+完了後に、取得commit SHA、配置先、各Skillの照合結果、
+作業領域の片付け結果、認識確認の方法を報告してください。
+失敗や中断で作業領域が残った場合は、JSONの場所と再確認方法も報告してください。
 ```
 
-一部だけ必要なら、`paths`から不要なSkillを外してください。リポジトリのルートにある`AGENTS.md`や`skills_plan/`を導入先へコピーする必要はありません。
+一部だけ必要なら、`skills`から不要な項目を外してください。開発手順は`spec-driven-development`、Git操作は`controlled-github`、秘密検査の管理は`secret-checks`を選びます。hardeningは設定対象の製品で選び、Codexから`claude-code-hardening`を使うこともできます。**Skill形式の互換性と、各Skillの対応OS・必要ツールは別です。** [用途別の実行要件](docs/installation.md#scope-and-prerequisites)を確認してください。
 
-- **branchは明示する**：URLの解釈に任せず、repository・ref・pathを分けて指定します。`/`を含むbranch名を使う場合も同様です。
-- **配置先は明示する**：installerのデフォルト配置先に任せず、対象リポジトリへ導入します。個人の全リポジトリで共通利用したい場合は、配置先を`~/.agents/skills/`へ変更できます。同名Skillの重複配置は避けてください。
-- **取得した版は自動更新されない**：更新時は差分を確認して置き換えます。同じ版を再現したい場合は、`ref`にbranch名ではなくcommit SHAを指定します。
+| 配置範囲 | Codex | Claude Code |
+| --- | --- | --- |
+| プロジェクト用 | `<project>/.agents/skills/` | `<project>/.claude/skills/` |
+| 個人用 | `~/.agents/skills/` | `~/.claude/skills/` |
 
-導入後はCodexの`/skills`で認識を確認してください。表示されない場合はCodexを再起動します。Skillの取得・配置と、GitHub操作に必要な認証設定は別の作業です。[OpenAI公式ドキュメント](https://learn.chatgpt.com/docs/build-skills)
+配布用scriptと照合用JSONは作業ディレクトリ内だけで使い、成功時に片付けます。`both`では配置先ごとに別名のJSONを使います。後日同じ版を再導入・照合する場合は、完了報告のcommit SHAから再取得してください。既存フォルダは上書きせず照合し、未配置のSkillは新規導入します。SHAの記録も失った場合、元の導入版を確定することはできません。[再確認・失敗時の扱い](docs/installation.md#3-interpret-results-and-preserve-failures)
 
-### GitHubから導入する（Claude Code）
+結果が`PASS`なら対象ファイルの一致を確認済みです。`INCOMPLETE`は欠落や不一致など、`BLOCKED`は入力・取得元・配置先・記録の問題を表します。既存フォルダをスキップしただけでは成功とせず、その内容も照合します。失敗したフォルダを勝手に削除してやり直すことはありません。[終了値と失敗時の扱い](docs/installation.md#3-interpret-results-and-preserve-failures)
 
-Claude Codeでは、導入先リポジトリのルートにある`.claude/skills/`へSkillをフォルダごと配置します。個人の全リポジトリで共通利用する場合は`~/.claude/skills/`を使います。配置したSkillは`/スキル名`で呼び出せます。[Claude Code公式ドキュメント](https://code.claude.com/docs/en/skills)
+導入後は新しいセッションで、Codexは`/skills`、Claude Codeは`/`の候補にSkillが表示されることを確認してください。呼び出しはそれぞれ`$controlled-github`、`/controlled-github`などです。ファイル照合の成功と、製品側の認識・実行確認は区別します。[Codex公式仕様](https://learn.chatgpt.com/docs/build-skills)、[Claude Code公式仕様](https://code.claude.com/docs/en/skills)
 
-導入先リポジトリでClaude Codeを開き、次の依頼を送ってください。この例はGitを使って取得し、共通の3つのSkillと`claude-code-hardening`を配置します。
-
-```text
-以下のGitHubリポジトリから、4つのSkillを導入してください。
-
-repository: DharmaDoll/agent-control-plane
-url: https://github.com/DharmaDoll/agent-control-plane.git
-ref: main
-paths:
-- skills/spec-driven-development
-- skills/controlled-github
-- skills/secret-checks
-- skills/claude-code-hardening
-
-配置先は、このリポジトリのルートにある .claude/skills/ としてください。
-各SkillはSKILL.mdだけでなく、参照資料やscriptを含むフォルダ全体を取得してください。
-
-- 最初に導入先のルート、git status --short、既存のSkill配置を確認する
-- HTTPSのGitを使って一時ディレクトリへ取得し、指定refのcommit SHAを確定する
-- 4つとも同じcommitの内容を使い、取得したSHAを報告する
-- Gitが使えない場合や取得に失敗した場合は、別方式へ切り替えず停止する
-- コピー前に全配置先を確認し、同名Skillや配置先のシンボリックリンクがあれば変更せず報告する
-- 配布元ルートのAGENTS.md・CLAUDE.md・skills_plan/・.gitはコピーしない
-- 取得したscriptの実行、hookの導入、保護設定の生成・有効化は行わない
-- 認証設定、既存のCLAUDE.md・AGENTS.md・settings.jsonは変更しない
-- commit・pushはしない
-- 導入後に各SkillのSKILL.mdと参照ファイルの存在、コピー元との内容の一致を確認する
-```
-
-一部だけ必要なら、`paths`から不要なSkillを外してください。個人用にする場合は、依頼文の配置先を`~/.claude/skills/`へ変更します。同名Skillが個人用とリポジトリ用の両方にあると個人用が優先されるため、重複配置を避けてください。[配置場所と優先順位](https://code.claude.com/docs/en/skills#resolve-skills-that-share-a-name)
-
-取得した版は自動更新されません。更新時は差分を確認して置き換え、同じ版を再現したい場合は`ref`にcommit SHAを指定します。Skillの内容と取得元を確認してから利用してください。
-
-導入後はClaude Codeで`/`を入力し、導入したSkillが候補に表示されることを確認します。表示されない場合は、導入先リポジトリでClaude Codeを再起動してください。例えば次のように呼び出します。[呼び出し方法](https://code.claude.com/docs/en/skills)
-
-```text
-/claude-code-hardening この環境と用途を確認し、推奨サンプルと制限を説明して。まだ設定の生成・有効化はしないで。
-```
-
-Skillを配置しただけでは、秘密情報の検査hookやClaude Codeの保護設定は有効になりません。必要なツールと対応OSは各Skillの要件に従い、保護設定の準備は[Claude Code版のhardening](#claude-code版のhardening)へ進んでください。
+Skillを配置しただけでは、秘密情報の検査hookや保護設定は有効になりません。必要な機能は、導入後に対象Skillへ依頼してください。
 
 ### 利用例
 
