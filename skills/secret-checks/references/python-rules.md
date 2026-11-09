@@ -65,6 +65,14 @@ Generic assignments recognize selected exact names such as `password`, `token`,
 `client_secret` and `api_key`, with the existing minimum of 12 matching value
 characters. Names are case-insensitive. JSON quoted keys, inline objects and
 shell `export` are supported without parsing or executing those languages.
+Quoted values remain literal candidates, including text that resembles code.
+Unquoted calls immediately followed by `(` and dotted identifier chains such as
+`fs.readFileSync` or `config.secretValue` are treated as runtime expressions.
+Other unquoted strings matching the value alphabet and length remain candidates.
+Bare identifiers cannot reliably be distinguished from unquoted literal values
+by this lexical rule; a long bare identifier can still be rejected. Dotted
+literal values that look exactly like member chains can be missed by this rule,
+although distinctive provider-token rules still run independently.
 Explicit service fields use their own value constraints. Suffixes such as
 `MY_PASSWORD_DOC` and public client IDs are not generic credential names.
 The scanner is not a complete JSON, shell or programming-language parser; escaped

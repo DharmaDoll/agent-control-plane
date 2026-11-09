@@ -72,6 +72,28 @@ class PatternTests(unittest.TestCase):
             [("sensitive-filename", ".env")],
         )
 
+    def test_credential_assignments_distinguish_literals_and_expressions(self) -> None:
+        positive = (
+            b"api_key=" + b"g" * 12,
+            b"api_key=" + b"g" * 13,
+            b'"password": "' + b"g" * 12 + b'"',
+            b"export CLIENT_SECRET=" + b"g" * 12,
+            b'password="fs.readFileSync"',
+            b"password=abc.123456789",
+        )
+        negative = (
+            b"api_key=" + b"g" * 11,
+            b"const password = fs.readFileSync(passwordPath, 'utf8').trim();",
+            b"password = config.secretValue;",
+            b"password = readSecretFile(passwordPath)",
+        )
+        for content in positive:
+            with self.subTest(content=content):
+                self.assertIn("credential-assignment", scanner.matching_rules(content))
+        for content in negative:
+            with self.subTest(content=content):
+                self.assertNotIn("credential-assignment", scanner.matching_rules(content))
+
     def test_unscannable_files_are_errors(self) -> None:
         with tempfile.TemporaryDirectory() as raw_root:
             source = Path(raw_root) / "example.txt"
@@ -224,6 +246,10 @@ class GitModeTests(unittest.TestCase):
             self.git(repository, "add", "example.txt")
             self.git(repository, "commit", "-q", "-m", "safe commit")
 
+            source.write_text("const password = fs.readFileSync(passwordPath, 'utf8').trim();\n")
+            self.git(repository, "add", "example.txt")
+            self.git(repository, "commit", "-q", "-m", "runtime credential read")
+
             value = inert_samples()["credential-assignment"]
             source.write_bytes(value)
             self.git(repository, "add", "example.txt")
@@ -238,7 +264,7 @@ class GitModeTests(unittest.TestCase):
             output = blocked.stdout + blocked.stderr
             self.assertIn("BLOCK credential-assignment", output)
             self.assertNotIn(value.decode(), output)
-            self.assertEqual(self.git(repository, "rev-list", "--count", "HEAD"), "1")
+            self.assertEqual(self.git(repository, "rev-list", "--count", "HEAD"), "2")
 
     def test_unsupported_tag_destination_is_not_a_clean_scan(self) -> None:
         with tempfile.TemporaryDirectory() as raw:

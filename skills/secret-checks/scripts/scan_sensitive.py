@@ -79,12 +79,6 @@ SECRET_RULES = {
         rb"['\"]?[A-Za-z0-9+/=_-]{20,}"
     ),
     "pypi-api-token": rb"\bpypi-[A-Za-z0-9_-]{85,}\b",
-    "credential-assignment": (
-        rb"(?i)\b(?<!-)(?:api[_-]?key|client[_-]?secret|password|token|"
-        rb"access[_-]?token|refresh[_-]?token|auth[_-]?token|"
-        rb"private[_-]?token|webhook[_-]?secret|signing[_-]?secret)"
-        rb"['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9/+_.-]{12,}"
-    ),
     "openai-token": rb"\bsk-(?:(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,200}|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})(?![\w-])",
     "anthropic-token": rb"\bsk-ant-(?:api03|admin01)-[A-Za-z0-9_-]{93}AA(?![\w-])",
     "huggingface-token": rb"\b(?:hf_|api_org_)[A-Za-z]{34}(?![\w-])",
@@ -106,8 +100,17 @@ SECRET_RULES = {
     "vault-token": rb"\bhv[bs]\.[A-Za-z0-9_-]{24,300}(?![\w-])",
     "azure-sas-url": rb"https://[A-Za-z0-9.-]+\.(?:blob|file|queue|table)\.core\.windows\.net/[^\s\"'<>]{0,4096}[?&]sig=[A-Za-z0-9%/+_-]{20,}(?:=|%3[Dd])?",
 }
+ASSIGNMENT = re.compile(
+    rb"(?i)\b(?<!-)(?:api[_-]?key|client[_-]?secret|password|token|"
+    rb"access[_-]?token|refresh[_-]?token|auth[_-]?token|"
+    rb"private[_-]?token|webhook[_-]?secret|signing[_-]?secret)"
+    rb"['\"]?\s*[:=]\s*(['\"]?)([A-Za-z0-9/+_.-]{12,})(?![A-Za-z0-9/+_.-])"
+)
+SECRET_RULES["credential-assignment"] = ASSIGNMENT.pattern
+MEMBER_EXPRESSION = re.compile(rb"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)+\Z")
 COMPILED_RULES = {
     name: re.compile(pattern) for name, pattern in SECRET_RULES.items()
+    if name != "credential-assignment"
 }
 
 # Opaque credentials need a specific field name, never just a service name in
@@ -150,6 +153,13 @@ VARIABLE = re.compile(rb"(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]
 def matching_rules(content: bytes) -> set[str]:
     """Inspect one byte string without returning or logging matched material."""
     found = {name for name, pattern in COMPILED_RULES.items() if pattern.search(content)}
+    for match in ASSIGNMENT.finditer(content):
+        # Unquoted calls and member references are computed values. Quoted text
+        # keeps the original literal detection, even when it resembles code.
+        if not match[1] and (content[match.end():match.end() + 1] == b"("
+                             or MEMBER_EXPRESSION.fullmatch(match[2])):
+            continue
+        found.add("credential-assignment")
     for match in CONTEXT_ASSIGNMENT.finditer(content):
         name = CONTEXT_KEYS[match[1].lower()]
         if CONTEXT_VALUES[name].fullmatch(match[2]):
