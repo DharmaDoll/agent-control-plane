@@ -23,7 +23,7 @@ import sys
 REPOSITORY = "DharmaDoll/agent-control-plane"
 SKILLS = (
     "spec-driven-development", "controlled-github", "secret-checks",
-    "codex-hardening", "claude-code-hardening",
+    "codex-hardening", "claude-code-hardening", "package-cooldown",
 )
 MAX_FILES = 4096
 MAX_FILE_BYTES = 8 * 1024 * 1024

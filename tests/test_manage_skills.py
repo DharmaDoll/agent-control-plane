@@ -32,7 +32,7 @@ NAMES = (
     "controlled-github",
     "secret-checks",
     "codex-hardening",
-    "claude-code-hardening",
+    "claude-code-hardening", "package-cooldown",
 )
 
 
@@ -158,7 +158,7 @@ class InstallationContractTests(unittest.TestCase):
         self.assertEqual(code, expected, stream.getvalue())
         return json.loads(stream.getvalue())
 
-    def test_all_five_for_both_agent_roots(self):
+    def test_all_skills_for_both_agent_roots(self):
         for agent in (".agents", ".claude"):
             with self.subTest(agent=agent):
                 dest = self.project / agent / "skills"
@@ -308,7 +308,7 @@ class InstallationContractTests(unittest.TestCase):
         self.assertNotEqual(row["status"], "MATCH")
         self.assertEqual(sentinel.read_bytes(), b"user-owned content")
         self.assertEqual(list(existing.iterdir()), [sentinel])
-        self.assertEqual(sum(row["status"] == "MATCH" for row in report["skills"]), 4)
+        self.assertEqual(sum(row["status"] == "MATCH" for row in report["skills"]), len(NAMES) - 1)
 
     def test_existing_skill_file_is_not_replaced(self):
         self.dest.mkdir(parents=True)
@@ -485,7 +485,7 @@ class InstallationContractTests(unittest.TestCase):
         rows = self.rows(report)
         self.assertEqual(rows["controlled-github"]["action"], "COPY_FAILED")
         self.assertEqual(rows["controlled-github"]["status"], "MISSING")
-        self.assertEqual(sum(r["status"] == "MATCH" for r in rows.values()), 4)
+        self.assertEqual(sum(r["status"] == "MATCH" for r in rows.values()), len(NAMES) - 1)
         self.assertEqual(self.verify(expected=1)["status"], "INCOMPLETE")
 
     def test_git_reads_disable_transports_without_changing_parent_environment(self):
@@ -553,7 +553,7 @@ class InstallationContractTests(unittest.TestCase):
         shutil.rmtree(self.source)
         report = self.verify(expected=1)
         self.assertEqual(sum(r["status"] == "MATCH" for r in report["skills"]), 1)
-        self.assertEqual(sum(r["status"] == "MISSING" for r in report["skills"]), 4)
+        self.assertEqual(sum(r["status"] == "MISSING" for r in report["skills"]), len(NAMES) - 1)
 
     def test_verify_detects_missing_changed_extra_and_mode_changes(self):
         self.install()

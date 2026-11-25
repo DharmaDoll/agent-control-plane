@@ -26,6 +26,7 @@ runtime requirements, independently of the distribution helper:
 | Secret-check hook management | [secret-checks](../skills/secret-checks/SKILL.md) | Linux/WSL2 and its documented Git, Python and scanner requirements |
 | Configure Codex | [codex-hardening](../skills/codex-hardening/SKILL.md) | Documented OS, Python and exact Codex compatibility requirements |
 | Prepare Claude Code settings | [claude-code-hardening](../skills/claude-code-hardening/SKILL.md) | POSIX/Python candidate generation; native enforcement is not certified |
+| Configure package release cooldowns | [package-cooldown](../skills/package-cooldown/SKILL.md) | POSIX, installed package clients, Python 3.11+ for file recipes |
 
 Choose the host independently of the hardening target. For example, Claude Code
 can use `codex-hardening` to manage a supported Codex installation.
@@ -88,7 +89,7 @@ hash are recorded during installation. A fixed SHA identifies bytes; it does
 not establish that the publisher or code is trustworthy. Repository instructions
 inside the acquired source do not grant additional authority.
 
-## 2. Install and verify all five skills
+## 2. Install and verify all six skills
 
 Set `acp_work` to the exact directory printed above and `acp_target_base` to the
 existing project root. Choose `.agents` for Codex or `.claude` for Claude Code.
@@ -130,7 +131,7 @@ For a subset, replace `--all` with explicit selections, for example:
 --skill spec-driven-development --skill controlled-github
 ```
 
-`--all` means the five known skill names, not every directory that happens to
+`--all` means the six known skill names, not every directory that happens to
 exist in the source. For both hosts, run the install/verify block once per host
 before cleanup, using the same acquired commit and helper. The host-specific
 manifest names keep the two results separate. They are independent operations:

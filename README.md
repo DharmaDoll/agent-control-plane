@@ -13,6 +13,7 @@ AIエージェントに任せる日々の作業を、再利用できるSkillと�
 | [secret-checks](skills/secret-checks/SKILL.md) | ローカル環境と既存hookを診断し、秘密情報の検査hookを導入・検証・更新・切り戻し・解除・cleanupする |
 | [codex-hardening](skills/codex-hardening/SKILL.md) | Codex CLIの版と設定を診断し、専用profileの導入・sandbox動作検証・復旧を行う |
 | [claude-code-hardening](skills/claude-code-hardening/SKILL.md) | Claude Codeの利用シナリオに合う推奨サンプルを選び、設定候補を生成・照合する。実機での有効化確認は別手順 |
+| [package-cooldown](skills/package-cooldown/SKILL.md) | パッケージ管理ツールの公開後待機期間を診断し、変更先・差分・実効値を示して未設定項目に適用する |
 
 ## 導入と使い方
 
@@ -33,10 +34,10 @@ Codex／Claude Codeとも、同じ[取得・配置・照合手順](docs/installa
 
 共通scriptにはPython 3.10以上とGit、POSIX環境が必要です。初期の検証環境はLinuxです。取得先にはworkspace内などの**書き込みが許可された作業領域**を指定し、`/tmp`が使えることは前提にしません。配置先の`.agents`や`.claude`が保護されている場合も、自動で設定を緩めず停止します。
 
-全5つを導入する場合は、対象プロジェクトでエージェントを開き、以下の依頼文を送ってください。`agent`は`codex`・`claude`・`both`から選びます。`both`は同じ版を2つの配置先へ別々に導入します。`scope`はプロジェクト用なら`project`、個人の全プロジェクトで共通利用するなら`user`です。これらは依頼文の選択項目で、scriptのCLIオプションではありません。
+全6つを導入する場合は、対象プロジェクトでエージェントを開き、以下の依頼文を送ってください。`agent`は`codex`・`claude`・`both`から選びます。`both`は同じ版を2つの配置先へ別々に導入します。`scope`はプロジェクト用なら`project`、個人の全プロジェクトで共通利用するなら`user`です。これらは依頼文の選択項目で、scriptのCLIオプションではありません。
 
 ```text
-以下のリポジトリから、全5つのSkillを導入してください。
+以下のリポジトリから、全6つのSkillを導入してください。
 
 repository: DharmaDoll/agent-control-plane
 ref: refs/heads/main
@@ -49,6 +50,7 @@ skills:
 - secret-checks
 - codex-hardening
 - claude-code-hardening
+- package-cooldown
 
 配布元の docs/installation.md にある固定取得手順と、
 同じcommitの scripts/manage_skills.py の install・verify を使ってください。
